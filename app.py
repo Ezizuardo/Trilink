@@ -31,7 +31,12 @@ def ensure_schema():
 
         column_names = {col["name"] for col in inspector.get_columns("user")}
         if "age" not in column_names:
-            conn.execute(text('ALTER TABLE "user" ADD COLUMN age INTEGER'))
+            ddl = 'ALTER TABLE "user" ADD COLUMN age INTEGER'
+            exec_sql = getattr(conn, "exec_driver_sql", None)
+            if exec_sql is not None:
+                exec_sql(ddl)
+            else:
+                conn.execute(text(ddl))
 
 RU = {"login_title":"Вход","email":"Email","password":"Пароль","sign_in":"Войти","register":"Зарегистрироваться","feed":"Лента","search":"Поиск","chat":"Чат","notifications":"Уведомления","plan":"Мой план","profile_title":"Профиль","complete_profile":"Заполните профиль","close":"Закрыть","welcome_title":"Добро пожаловать!","tagline":"Найдите своего специалиста!","first_time":"Впервые у нас?","signup":"Зарегистрироваться","submit":"Далее","cancel":"Отмена","name_title":"Расскажите о себе","first_name":"Имя","last_name":"Фамилия","avatar_title":"Аватар","nickname_title":"Придумайте никнейм","suggestions":"Варианты никнейма","university":"ВУЗ"}
 EN = {"login_title":"Sign in","email":"Email","password":"Password","sign_in":"Sign in","register":"Register","feed":"Feed","search":"Search","chat":"Chat","notifications":"Notifications","plan":"My plan","profile_title":"Profile","complete_profile":"Complete your profile","close":"Close","welcome_title":"Welcome!","tagline":"Find your specialist!","first_time":"New here?","signup":"Sign up","submit":"Next","cancel":"Cancel","name_title":"Tell us about you","first_name":"First name","last_name":"Last name","avatar_title":"Avatar","nickname_title":"Choose a nickname","suggestions":"Suggestions","university":"University"}
