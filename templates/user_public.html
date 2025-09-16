@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Профиль пользователя{% endblock %}
+{% block content %}
+<h1><span class="icon icon-profile"></span>{{ person.first_name or 'Профиль' }} {{ person.last_name or '' }}</h1>
+<section class="profile-public">
+  <div class="card public-left">
+    <img class="avatar" src="{{ avatar }}" alt="avatar">
+    <h2>О себе</h2>
+    <p><strong>@{{ person.nickname or 'без_ника' }}</strong></p>
+    <p>Роль: {{ 'Специалист' if person.role=='specialist' else 'Ученик' }}</p>
+    <p>Имя: {{ person.first_name or '—' }}</p>
+    <p>Фамилия: {{ person.last_name or '—' }}</p>
+    <p>Возраст: {{ person.age or '—' }}</p>
+    <p>Образование: {{ person.education or '—' }}</p>
+    <p>Год выпуска: {{ person.graduation_year or '—' }}</p>
+  </div>
+  <div class="card public-right">
+    <h2>Мой курс</h2>
+    {% if person.course_image %}
+      <div class="course-image" style="background-image:url('{{ person.course_image }}')"></div>
+    {% else %}
+      <div class="course-placeholder">Курса пока нет</div>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

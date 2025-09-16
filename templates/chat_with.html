@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Диалог{% endblock %}
 {% block content %}
-<h1>Диалог с @{{ other.nickname }}</h1>
+<h1><span class="icon icon-chat"></span>Диалог с @{{ other.nickname }}</h1>
 <div class="card chat-box">
   <div class="messages">
     {% for m in messages %}
