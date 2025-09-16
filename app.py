@@ -4,6 +4,7 @@ from flask import Flask, render_template, request, redirect, url_for, flash, ses
 from flask_sqlalchemy import SQLAlchemy
 from passlib.hash import argon2
 from werkzeug.utils import secure_filename
+from sqlalchemy import inspect, text
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
@@ -11,6 +12,26 @@ DEFAULT_AVATAR = "/static/img/monkey.png"
 ALLOWED_IMG = {"png","jpg","jpeg","gif","webp"}
 
 db = SQLAlchemy()
+
+
+def ensure_schema():
+    """Apply simple runtime migrations that are not covered by create_all()."""
+
+    # ``db.engine`` is only available inside an application context, so the
+    # function is expected to be called from there.
+    engine = db.engine
+
+    # ``engine.begin()`` opens a transaction and commits it automatically
+    # which ensures that the DDL executed below is persisted.
+    with engine.begin() as conn:
+        inspector = inspect(conn)
+
+        if "user" not in inspector.get_table_names():
+            return
+
+        column_names = {col["name"] for col in inspector.get_columns("user")}
+        if "age" not in column_names:
+            conn.execute(text('ALTER TABLE "user" ADD COLUMN age INTEGER'))
 
 RU = {"login_title":"Вход","email":"Email","password":"Пароль","sign_in":"Войти","register":"Зарегистрироваться","feed":"Лента","search":"Поиск","chat":"Чат","notifications":"Уведомления","plan":"Мой план","profile_title":"Профиль","complete_profile":"Заполните профиль","close":"Закрыть","welcome_title":"Добро пожаловать!","tagline":"Найдите своего специалиста!","first_time":"Впервые у нас?","signup":"Зарегистрироваться","submit":"Далее","cancel":"Отмена","name_title":"Расскажите о себе","first_name":"Имя","last_name":"Фамилия","avatar_title":"Аватар","nickname_title":"Придумайте никнейм","suggestions":"Варианты никнейма","university":"ВУЗ"}
 EN = {"login_title":"Sign in","email":"Email","password":"Password","sign_in":"Sign in","register":"Register","feed":"Feed","search":"Search","chat":"Chat","notifications":"Notifications","plan":"My plan","profile_title":"Profile","complete_profile":"Complete your profile","close":"Close","welcome_title":"Welcome!","tagline":"Find your specialist!","first_time":"New here?","signup":"Sign up","submit":"Next","cancel":"Cancel","name_title":"Tell us about you","first_name":"First name","last_name":"Last name","avatar_title":"Avatar","nickname_title":"Choose a nickname","suggestions":"Suggestions","university":"University"}
@@ -51,6 +72,7 @@ def create_app():
 
     with app.app_context():
         db.create_all()
+        ensure_schema()
 
     register_routes(app)
     return app
@@ -61,6 +83,7 @@ class User(db.Model):
     email = db.Column(db.String(255), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
     role = db.Column(db.String(20), nullable=False, default="student")
+    age = db.Column(db.Integer)
     first_name = db.Column(db.String(120))
     last_name = db.Column(db.String(120))
     nickname = db.Column(db.String(120), unique=True)
