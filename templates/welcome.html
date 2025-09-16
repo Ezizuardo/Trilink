@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ t('welcome_title') }}{% endblock %}
+{% block content %}
+<div class="card" style="text-align:center">
+  <h1>{{ t('welcome_title') }} 🎉</h1>
+  <p>@{{ nickname }}</p>
+  <p><a class="btn strong" href="{{ url_for('feed') }}">Перейти в ленту</a></p>
+</div>
+{% endblock %}

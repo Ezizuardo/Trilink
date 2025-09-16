@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}{{ t('nickname_title') }}{% endblock %}
+{% block content %}
+<h1>{{ t('nickname_title') }}</h1>
+<form method="post" class="card form narrow">
+  <label>Никнейм<input name="nickname" placeholder="your-nickname" required></label>
+  <div class="muted">{{ t('suggestions') }}:</div>
+  <div class="row" style="flex-wrap:wrap;gap:8px">
+    <button class="chip" type="button" onclick="document.querySelector('input[name=nickname]').value='ivan-ivanov'">ivan-ivanov</button>
+    <button class="chip" type="button" onclick="document.querySelector('input[name=nickname]').value='user-new'">user-new</button>
+    <button class="chip" type="button" onclick="document.querySelector('input[name=nickname]').value='nickname-01'">nickname-01</button>
+  </div>
+  <div class="row">
+    <button class="btn outline" name="cancel" value="1">{{ t('cancel') }}</button>
+    <button class="btn strong" type="submit">{{ t('submit') }}</button>
+  </div>
+</form>
+{% endblock %}

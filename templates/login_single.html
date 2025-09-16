@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}{{ t('login_title') }}{% endblock %}
+{% block content %}
+<div class="login-centered">
+  <div class="login-card card">
+    <h1>{{ t('login_title') }}</h1>
+    <form method="post" action="{{ url_for('login_single') }}" class="form">
+      <label>{{ t('email') }}<input name="email" type="email" required placeholder="you@university.ru"></label>
+      <label>{{ t('password') }}<input name="password" type="password" required placeholder="••••••••"></label>
+      <label class="remember"><input type="checkbox" name="remember" checked> Не выполнять выход</label>
+      <button class="btn strong" type="submit">Войти</button>
+    </form>
+    <div class="muted foot-note">{{ t('first_time') }} <a href="{{ url_for('register') }}">{{ t('signup') }}</a></div>
+  </div>
+</div>
+{% endblock %}

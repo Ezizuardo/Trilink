@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="{{ 'ru' if g.get('lang','ru')=='ru' else 'en' }}" data-theme="{{ theme }}">
+<head>
+  <meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>TriLink</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+</head>
+<body class="body">
+<header class="topbar">
+  <div class="left">
+    <a class="brand" href="{{ url_for('feed') }}"><span class="logo-hex"></span> <strong>TriLink</strong> <span class="tagline">{{ t('tagline') }}</span></a>
+  </div>
+  <nav class="nav">
+    {% if session.get('user_id') %}
+      <a href="{{ url_for('feed') }}">🏠 {{ t('feed') }}</a>
+      <a href="{{ url_for('search') }}">🔎 {{ t('search') }}</a>
+      <a href="{{ url_for('chat_index') }}">💬 {{ t('chat') }}</a>
+      <div class="avatar-menu">
+        <button class="avatar-button"><img src="{{ url_for('static', filename='img/monkey.png') }}" class="avatar-mini" alt="me"></button>
+        <div class="dropdown">
+          <div class="dropdown-row">
+            <span>🎛 Тема</span>
+            <label class="theme-toggle small">
+              <input id="themeToggleMenu" type="checkbox" {% if theme=='dark' %}checked{% endif %}/>
+              <span class="track"><span class="knob"></span></span>
+            </label>
+          </div>
+          <a href="{{ url_for('profile') }}">👤 {{ t('profile_title') }}</a>
+          <a href="{{ url_for('logout') }}">↩️ Logout</a>
+        </div>
+      </div>
+    {% else %}
+      <a href="{{ url_for('login_single') }}">{{ t('login_title') }}</a>
+    {% endif %}
+  </nav>
+</header>
+<main class="container">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}<div class="flash-wrap">{% for cat,msg in messages %}<div class="flash {{cat}}">{{ msg }}</div>{% endfor %}</div>{% endif %}
+  {% endwith %}
+  {% block content %}{% endblock %}
+</main>
+<script>const SET_THEME_URL="{{ url_for('set_theme', theme='__') }}";</script>
+<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

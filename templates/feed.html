@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}{{ t('feed') }}{% endblock %}
+{% block content %}
+<h1>🏠 {{ t('feed') }}</h1>
+<div class="feed">
+  {% for p in posts %}
+  <article class="post card">
+    <header class="post-h">
+      <img class="avatar-mini" src="{{ (p.user.avatar if p.user else None) or url_for('static', filename='img/monkey.png') }}">
+      <div>
+        <div class="name">{{ (p.user.first_name if p.user else '') }} {{ (p.user.last_name if p.user else '') }} · @{{ (p.user.nickname if p.user else '') }}</div>
+        <div class="meta">{{ p.created_at.strftime('%d %b %Y %H:%M') }}</div>
+      </div>
+    </header>
+    <h3>{{ p.title }}</h3>
+    <p class="muted">{{ p.summary }}</p>
+  </article>
+  {% endfor %}
+</div>
+{% endblock %}

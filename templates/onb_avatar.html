@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}{{ t('avatar_title') }}{% endblock %}
+{% block content %}
+<h1>{{ t('avatar_title') }}</h1>
+<form method="post" enctype="multipart/form-data" class="card form narrow">
+  <img class="avatar" src="{{ avatar_url }}" alt="avatar">
+  <label class="btn file-btn">Загрузить аватар<input type="file" name="avatar" accept="image/*"></label>
+  <div class="row">
+    <button class="btn outline" name="cancel" value="1">{{ t('cancel') }}</button>
+    <button class="btn strong" type="submit">{{ t('submit') }}</button>
+  </div>
+</form>
+{% endblock %}

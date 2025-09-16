@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Регистрация{% endblock %}
+{% block content %}
+<h1>Кто вы?</h1>
+<div class="grid-2">
+  <a class="card role v2" href="{{ url_for('register_role', role='student') }}">
+    <!-- ПРИЛОЖИТЕ СЮДА ИЗОБРАЖЕНИЕ (Студент) -->
+    <div class="role-title">🎓 Я студент</div>
+    <div class="muted">Да, я ищу специалиста</div>
+  </a>
+  <a class="card role v2" href="{{ url_for('register_role', role='specialist') }}">
+    <!-- ПРИЛОЖИТЕ СЮДА ИЗОБРАЖЕНИЕ (Специалист) -->
+    <div class="role-title">👨‍🏫 Я специалист</div>
+    <div class="muted">Да, я предлагаю услуги</div>
+  </a>
+</div>
+{% endblock %}

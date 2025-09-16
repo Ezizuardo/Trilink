@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}{{ t('chat') }}{% endblock %}
+{% block content %}
+<h1>💬 {{ t('chat') }}</h1>
+{% if conversations and conversations|length %}
+  <div class="grid-cards">
+  {% for c in conversations %}
+    <a class="card" href="{{ url_for('chat_with', user_id=c.other.id) }}">
+      <div class="row" style="gap:12px;align-items:center">
+        <img class="avatar-mini" src="{{ c.other.avatar or url_for('static', filename='img/monkey.png') }}">
+        <div><div><b>@{{ c.other.nickname }}</b></div><div class="muted">{{ c.last.text if c.last else 'Диалог' }}</div></div>
+      </div>
+    </a>
+  {% endfor %}
+  </div>
+{% else %}
+  <div class="card">У вас пока нет диалогов. Откройте <a href="{{ url_for('search') }}">поиск</a> и начните переписку.</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Диалог{% endblock %}
+{% block content %}
+<h1>Диалог с @{{ other.nickname }}</h1>
+<div class="card chat-box">
+  <div class="messages">
+    {% for m in messages %}
+      <div class="msg {% if m.sender_id != other.id %}me{% endif %}"><span>{{ m.text }}</span><time>{{ m.created_at.strftime('%H:%M') }}</time></div>
+    {% endfor %}
+  </div>
+  <form method="post" class="send sticky">
+    <input name="text" placeholder="Написать сообщение…" autofocus>
+    <button class="btn strong">Отправить</button>
+  </form>
+</div>
+<script>const box=document.querySelector('.messages'); if(box){ box.scrollTop=box.scrollHeight; }</script>
+{% endblock %}

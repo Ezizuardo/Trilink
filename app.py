@@ -1,0 +1,331 @@
+# -*- coding: utf-8 -*-
+import os, json, datetime, random
+from flask import Flask, render_template, request, redirect, url_for, flash, session, send_from_directory, g
+from flask_sqlalchemy import SQLAlchemy
+from passlib.hash import argon2
+from werkzeug.utils import secure_filename
+
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
+DEFAULT_AVATAR = "/static/img/monkey.png"
+ALLOWED_IMG = {"png","jpg","jpeg","gif","webp"}
+
+db = SQLAlchemy()
+
+RU = {"login_title":"Вход","email":"Email","password":"Пароль","sign_in":"Войти","register":"Зарегистрироваться","feed":"Лента","search":"Поиск","chat":"Чат","notifications":"Уведомления","plan":"Мой план","profile_title":"Профиль","complete_profile":"Заполните профиль","close":"Закрыть","welcome_title":"Добро пожаловать!","tagline":"Найдите своего специалиста!","first_time":"Впервые у нас?","signup":"Зарегистрироваться","submit":"Далее","cancel":"Отмена","name_title":"Расскажите о себе","first_name":"Имя","last_name":"Фамилия","avatar_title":"Аватар","nickname_title":"Придумайте никнейм","suggestions":"Варианты никнейма","university":"ВУЗ"}
+EN = {"login_title":"Sign in","email":"Email","password":"Password","sign_in":"Sign in","register":"Register","feed":"Feed","search":"Search","chat":"Chat","notifications":"Notifications","plan":"My plan","profile_title":"Profile","complete_profile":"Complete your profile","close":"Close","welcome_title":"Welcome!","tagline":"Find your specialist!","first_time":"New here?","signup":"Sign up","submit":"Next","cancel":"Cancel","name_title":"Tell us about you","first_name":"First name","last_name":"Last name","avatar_title":"Avatar","nickname_title":"Choose a nickname","suggestions":"Suggestions","university":"University"}
+def tr(lang, key): return (RU if lang=="ru" else EN).get(key, key)
+
+def create_app():
+    app = Flask(__name__, instance_relative_config=True, static_folder="static", template_folder="templates")
+    app.config.from_mapping(
+        SECRET_KEY="dev",
+        SQLALCHEMY_DATABASE_URI="sqlite:///" + os.path.join(app.instance_path, "app.db"),
+        SQLALCHEMY_TRACK_MODIFICATIONS=False,
+        UPLOAD_FOLDER=UPLOAD_FOLDER,
+        PERMANENT_SESSION_LIFETIME=datetime.timedelta(days=7),
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE="Lax",
+        SESSION_COOKIE_SECURE=False,
+    )
+    app.config.from_pyfile("config.py", silent=True)
+    os.makedirs(app.instance_path, exist_ok=True)
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    os.makedirs(os.path.join(UPLOAD_FOLDER,"avatars"), exist_ok=True)
+
+    db.init_app(app)
+
+    # Register hooks without decorators to keep linters happy
+    def _globals():
+        g.lang = session.get("lang", "ru")
+        g.theme = session.get("theme", "dark")
+    def inject_i18n():
+        return dict(
+            t=lambda k: tr(g.lang, k),
+            lang=g.lang,
+            theme=g.theme,
+            current_user=current_user,
+        )
+    app.before_request(_globals)
+    app.context_processor(inject_i18n)
+
+    with app.app_context():
+        db.create_all()
+
+    register_routes(app)
+    return app
+
+# Models
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(255), unique=True, nullable=False)
+    password_hash = db.Column(db.String(255), nullable=False)
+    role = db.Column(db.String(20), nullable=False, default="student")
+    first_name = db.Column(db.String(120))
+    last_name = db.Column(db.String(120))
+    nickname = db.Column(db.String(120), unique=True)
+    avatar = db.Column(db.String(255))
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    # one-to-one profiles
+    student = db.relationship("StudentProfile", backref="user", uselist=False, cascade="all, delete-orphan")
+    specialist = db.relationship("SpecialistProfile", backref="user", uselist=False, cascade="all, delete-orphan")
+    # posts relationship
+    posts = db.relationship("Post", backref="user", lazy=True, cascade="all, delete-orphan")
+
+class StudentProfile(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, unique=True)
+    looking_for = db.Column(db.Text)
+
+class SpecialistProfile(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False, unique=True)
+    education_degree = db.Column(db.String(120))
+    workplace = db.Column(db.String(255))
+    keywords = db.Column(db.Text)
+
+class Post(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    title = db.Column(db.String(255))
+    summary = db.Column(db.Text)
+    image = db.Column(db.String(255))
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+
+class Conversation(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+
+class ConversationMember(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    conversation_id = db.Column(db.Integer, db.ForeignKey("conversation.id"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+
+class Message(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    conversation_id = db.Column(db.Integer, db.ForeignKey("conversation.id"), nullable=False)
+    sender_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    text = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+
+def current_user():
+    uid = session.get("user_id")
+    return User.query.get(uid) if uid else None
+
+def login_required(f):
+    from functools import wraps
+    @wraps(f)
+    def w(*args, **kwargs):
+        if not session.get("user_id"):
+            return redirect(url_for("login_screen"))
+        return f(*args, **kwargs)
+    return w
+
+def ensure_bots():
+    if User.query.filter_by(email="alice@bots.dev").first(): return
+    bots = [
+        ("alice@bots.dev","specialist","Alice","Johnson","alice-tutor","/static/img/monkey.png","математика, ЕГЭ","Магистр","МГУ",
+         [("Линал: с чего начать","Сводка тем.","")]),
+        ("bob@bots.dev","specialist","Bob","Lee","bob-coder","/static/img/monkey.png","python, алгоритмы","Магистр","ИТМО",
+         [("Python: 3 практики","Заметки для старта.","")]),
+    ]
+    for email, role, fn, ln, nick, avatar, kw, deg, work, posts in bots:
+        u = User(email=email, role=role, password_hash=argon2.hash("Passw0rd!"), first_name=fn, last_name=ln, nickname=nick, avatar=avatar)
+        if role == "specialist":
+            u.specialist = SpecialistProfile(education_degree=deg, workplace=work, keywords=kw)
+        db.session.add(u); db.session.commit()
+        for title, summary, img in posts:
+            db.session.add(Post(user_id=u.id, title=title, summary=summary, image=img))
+        db.session.commit()
+
+def translit(s):
+    table = {'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'e','ж':'zh','з':'z','и':'i','й':'y','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r','с':'s','т':'t','у':'u','ф':'f','х':'h','ц':'c','ч':'ch','ш':'sh','щ':'sch','ъ':'','ы':'y','ь':'','э':'e','ю':'yu','я':'ya'}
+    return ''.join(table.get(ch, ch) for ch in (s or '').lower())
+
+def register_routes(app):
+    @app.route("/set-theme/<theme>")
+    def set_theme(theme):
+        session["theme"] = theme if theme in ("light","dark") else "light"
+        return ("",204)
+
+    @app.route("/logout")
+    def logout():
+        session.clear(); return redirect(url_for("login_screen"))
+
+    @app.route("/")
+    def login_screen():
+        return render_template("login_single.html")
+
+    @app.route("/login", methods=["GET","POST"])
+    def login_single():
+        if request.method == "POST":
+            email = request.form.get("email","").strip().lower()
+            password = request.form.get("password","")
+            remember = bool(request.form.get("remember"))
+            user = User.query.filter_by(email=email).first()
+            if not user or not argon2.verify(password, user.password_hash):
+                flash("Неверная пара email/пароль.","error")
+                return render_template("login_single.html")
+            session.clear(); session["user_id"] = user.id; session.permanent = True
+            if remember: app.permanent_session_lifetime = datetime.timedelta(days=int(app.config.get("REMEMBER_DAYS",30)))
+            else: app.permanent_session_lifetime = datetime.timedelta(days=int(app.config.get("SESSION_DAYS",7)))
+            return redirect(url_for("feed"))
+        return render_template("login_single.html")
+
+    @app.route("/register")
+    def register():
+        return render_template("register_choose.html")
+
+    @app.route("/register/<role>", methods=["GET","POST"])
+    def register_role(role):
+        role = role.lower()
+        if role not in ("student","specialist"): return redirect(url_for("register"))
+        if request.method == "POST":
+            email = request.form.get("email","").strip().lower()
+            password = request.form.get("password","")
+            confirm = request.form.get("confirm","")
+            if password != confirm:
+                flash("Пароли не совпадают.","error"); return render_template("register_role.html", role=role)
+            if not email or not password:
+                flash("Укажите почту и пароль.","error"); return render_template("register_role.html", role=role)
+            if User.query.filter_by(email=email).first():
+                flash("Почта уже зарегистрирована. Войдите.", "error"); return redirect(url_for("login_single"))
+            u = User(email=email, role=role, password_hash=argon2.hash(password))
+            if role=="student": u.student = StudentProfile()
+            else: u.specialist = SpecialistProfile()
+            db.session.add(u); db.session.commit()
+            session.clear(); session["user_id"]=u.id; session.permanent=True
+            return redirect(url_for("onb_name"))
+        return render_template("register_role.html", role=role)
+
+    @app.route("/onboarding/name", methods=["GET","POST"])
+    @login_required
+    def onb_name():
+        u = current_user()
+        if request.method=="POST":
+            u.first_name = request.form.get("first_name","").strip()
+            u.last_name = request.form.get("last_name","").strip()
+            if u.role=="student":
+                uni = request.form.get("university","").strip()
+                if not u.student:
+                    u.student = StudentProfile(looking_for=uni)
+                else:
+                    u.student.looking_for = uni
+            db.session.commit()
+            if "cancel" in request.form: return redirect(url_for("feed"))
+            return redirect(url_for("onb_avatar"))
+        return render_template("onb_name.html")
+
+    @app.route("/onboarding/avatar", methods=["GET","POST"])
+    @login_required
+    def onb_avatar():
+        u = current_user()
+        if request.method=="POST":
+            file = request.files.get("avatar")
+            if file and file.filename:
+                ext = file.filename.rsplit(".",1)[-1].lower()
+                if ext in ALLOWED_IMG:
+                    path = os.path.join(UPLOAD_FOLDER,"avatars", secure_filename(f"user{u.id}_avatar.{ext}"))
+                    os.makedirs(os.path.dirname(path), exist_ok=True)
+                    file.save(path); u.avatar = "/uploads/avatars/" + os.path.basename(path); db.session.commit()
+            if "cancel" in request.form: return redirect(url_for("feed"))
+            return redirect(url_for("onb_nick"))
+        return render_template("onb_avatar.html", avatar_url=u.avatar or DEFAULT_AVATAR)
+
+    @app.route("/onboarding/nickname", methods=["GET","POST"])
+    @login_required
+    def onb_nick():
+        u = current_user()
+        base_first = translit(u.first_name or "user")
+        base_last = translit(u.last_name or "new")
+        suggestions = [f"{base_first}-{base_last}", f"{base_first}.{base_last}1", f"{base_last}{base_first}"]
+        if request.method=="POST":
+            if "cancel" in request.form: return redirect(url_for("feed"))
+            nick = request.form.get("nickname","").strip()
+            deny = set(["admin","support","moderator","romie","trilink","superuser","help","owner"])
+            if not nick or nick.lower() in deny or User.query.filter(User.nickname==nick, User.id!=u.id).first():
+                flash("Введите уникальный ник.","error"); return render_template("onb_nick.html", suggestions=suggestions)
+            u.nickname = nick; db.session.commit()
+            return redirect(url_for("welcome"))
+        return render_template("onb_nick.html", suggestions=suggestions)
+
+    @app.route("/welcome")
+    @login_required
+    def welcome():
+        u = current_user()
+        return render_template("welcome.html", nickname=u.nickname or u.email.split("@")[0])
+
+    @app.route("/feed")
+    @login_required
+    def feed():
+        ensure_bots()
+        posts = Post.query.order_by(Post.created_at.desc()).all()
+        return render_template("feed.html", posts=posts)
+
+    @app.route("/search")
+    @login_required
+    def search():
+        q = request.args.get("q","").strip().lower()
+        people = User.query.filter_by(role="specialist").all()
+        if q:
+            def match(p):
+                data = " ".join([p.first_name or "", p.last_name or "", p.nickname or "", (p.specialist.keywords if p.specialist else "")])
+                return q in data.lower()
+            people = list(filter(match, people))
+        return render_template("search.html", people=people, q=q)
+
+    class ConvHelper:
+        @staticmethod
+        def get_or_create(a,b):
+            existing = db.session.query(Conversation).join(ConversationMember).filter(ConversationMember.user_id.in_([a,b])).all()
+            for c in existing:
+                ids = set(m.user_id for m in ConversationMember.query.filter_by(conversation_id=c.id))
+                if ids == set([a,b]): return c
+            c = Conversation(); db.session.add(c); db.session.commit()
+            db.session.add(ConversationMember(conversation_id=c.id, user_id=a))
+            db.session.add(ConversationMember(conversation_id=c.id, user_id=b)); db.session.commit()
+            return c
+
+    @app.route("/chat")
+    @login_required
+    def chat_index():
+        uid = session["user_id"]
+        conv_ids = [m.conversation_id for m in ConversationMember.query.filter_by(user_id=uid).all()]
+        convs = []
+        for cid in conv_ids:
+            other_id = [m.user_id for m in ConversationMember.query.filter_by(conversation_id=cid).all() if m.user_id!=uid][0]
+            other = User.query.get(other_id)
+            last = Message.query.filter_by(conversation_id=cid).order_by(Message.created_at.desc()).first()
+            convs.append({"id":cid,"other":other,"last":last})
+        return render_template("chat.html", conversations=convs)
+
+    @app.route("/chat/with/<int:user_id>", methods=["GET","POST"])
+    @login_required
+    def chat_with(user_id):
+        me = session["user_id"]
+        if me == user_id:
+            flash("Нельзя писать самому себе.","error"); return redirect(url_for("chat_index"))
+        c = ConvHelper.get_or_create(me, user_id)
+        if request.method == "POST":
+            text = (request.form.get("text") or "").strip()
+            if text:
+                db.session.add(Message(conversation_id=c.id, sender_id=me, text=text)); db.session.commit()
+        msgs = Message.query.filter_by(conversation_id=c.id).order_by(Message.created_at.asc()).all()
+        other_id = [m.user_id for m in ConversationMember.query.filter_by(conversation_id=c.id).all() if m.user_id!=me][0]
+        other = User.query.get(other_id)
+        return render_template("chat_with.html", other=other, messages=msgs)
+
+    @app.route("/profile")
+    @login_required
+    def profile():
+        u = current_user()
+        return render_template("profile.html", user=u, avatar_url=u.avatar or DEFAULT_AVATAR)
+
+    @app.route("/uploads/<path:filename>")
+    def uploaded(filename):
+        return send_from_directory(UPLOAD_FOLDER, filename)
+
+app = create_app()
+
+if __name__ == "__main__":
+    app.run(debug=True)

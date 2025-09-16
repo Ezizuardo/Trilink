@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}{{ t('name_title') }}{% endblock %}
+{% block content %}
+<h1>{{ t('name_title') }}</h1>
+<form method="post" class="card form narrow">
+  <label>{{ t('first_name') }}<input name="first_name" required></label>
+  <label>{{ t('last_name') }}<input name="last_name" required></label>
+  {% if current_user() and current_user().role=='student' %}
+    <label>{{ t('university') }}<input name="university" placeholder="Например, МГУ"></label>
+  {% endif %}
+  <div class="row">
+    <button class="btn outline" name="cancel" value="1">{{ t('cancel') }}</button>
+    <button class="btn strong" type="submit">{{ t('submit') }}</button>
+  </div>
+</form>
+{% endblock %}

@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Регистрация{% endblock %}
+{% block content %}
+<div class="login-centered">
+  <div class="login-card card">
+    <h1>Регистрация — {% if role=='student' %}Студент{% else %}Специалист{% endif %}</h1>
+    <form method="post" class="form">
+      <label>Email<input name="email" type="email" required></label>
+      <label>Пароль<input name="password" type="password" required></label>
+      <label>Повторите пароль<input name="confirm" type="password" required></label>
+      <button class="btn strong" type="submit">{{ t('submit') }}</button>
+    </form>
+    <div class="muted foot-note"><a href="{{ url_for('login_single') }}">Уже есть аккаунт? Войти</a></div>
+  </div>
+</div>
+{% endblock %}
