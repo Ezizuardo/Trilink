@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% block title %}{{ t('chat') }}{% endblock %}
 {% block content %}
-<h1>💬 {{ t('chat') }}</h1>
+<h1><span class="icon icon-chat"></span>{{ t('chat') }}</h1>
 {% if conversations and conversations|length %}
   <div class="grid-cards">
   {% for c in conversations %}
     <a class="card" href="{{ url_for('chat_with', user_id=c.other.id) }}">
       <div class="row" style="gap:12px;align-items:center">
-        <img class="avatar-mini" src="{{ c.other.avatar or url_for('static', filename='img/monkey.png') }}">
+        <img class="avatar-mini" src="{{ avatar_url(c.other) }}">
         <div><div><b>@{{ c.other.nickname }}</b></div><div class="muted">{{ c.last.text if c.last else 'Диалог' }}</div></div>
       </div>
     </a>

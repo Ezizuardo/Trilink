@@ -1,22 +1,30 @@
 {% extends "base.html" %}
 {% block title %}{{ t('search') }}{% endblock %}
 {% block content %}
-<h1>🔎 {{ t('search') }}</h1>
+<h1><span class="icon icon-search"></span>{{ t('search') }}</h1>
 <form class="searchbar" method="get">
-  <input name="q" value="{{ q }}" placeholder="матан, линал, ЕГЭ, python">
-  <button class="btn strong" type="submit">Search</button>
+  <input name="q" value="{{ q }}" placeholder="Имя, @ник или направление">
+  <button class="btn strong" type="submit">Найти</button>
 </form>
 <div class="grid-cards">
   {% for p in people %}
-  <div class="card person">
-    <img class="avatar-mini" src="{{ p.avatar or url_for('static', filename='img/monkey.png') }}">
-    <div class="p-name">{{ p.first_name }} {{ p.last_name }} · @{{ p.nickname }}</div>
-    <div class="muted">{{ p.specialist.education_degree if p.specialist else '' }} — {{ p.specialist.workplace if p.specialist else '' }}</div>
-    <div class="tags">{{ p.specialist.keywords if p.specialist else '' }}</div>
-    <div class="row" style="gap:8px;margin-top:6px">
-      <a class="btn outline" href="{{ url_for('chat_with', user_id=p.id) }}">💬 Написать</a>
+  <a class="card person" href="{{ url_for('public_profile', user_id=p.id) }}">
+    <div class="person-row">
+      <img class="avatar-mini" src="{{ avatar_url(p) }}" alt="{{ p.nickname or p.first_name }}">
+      <div>
+        <div class="p-name">{{ p.first_name or 'Без имени' }} {{ p.last_name or '' }}</div>
+        <div class="muted">@{{ p.nickname or 'без_ника' }} · {{ 'Специалист' if p.role=='specialist' else 'Ученик' }}</div>
+      </div>
     </div>
-  </div>
+    <div class="tags">{{ p.specialist.keywords if p.specialist else (p.student.looking_for if p.student else '') }}</div>
+    <div class="person-actions">
+      <span>Перейти к профилю</span>
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7-1.41-1.41L13.17 12 7.59 6.41 9 5Z"/></svg>
+    </div>
+  </a>
   {% endfor %}
+  {% if not people %}
+  <div class="card muted">По вашему запросу ничего не найдено.</div>
+  {% endif %}
 </div>
 {% endblock %}
