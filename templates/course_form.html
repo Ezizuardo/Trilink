@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Добавить курс{% endblock %}
+{% block content %}
+<h1><span class="icon icon-profile"></span>Добавить курс</h1>
+<form class="card course-form" method="post" enctype="multipart/form-data" id="courseForm">
+  <div class="grid-2 stack-sm">
+    <label class="field">
+      <span>Заголовок *</span>
+      <input name="title" value="{{ form.title }}" placeholder="Например, React с нуля" required>
+    </label>
+    <label class="field">
+      <span>Цена интенсива *</span>
+      <input name="price" value="{{ form.price }}" placeholder="3500" inputmode="decimal" required>
+    </label>
+    <label class="field">
+      <span>Предмет</span>
+      <input name="subject" value="{{ form.subject }}" placeholder="Направление или предмет">
+    </label>
+    <label class="field">
+      <span>Тема (можно пропустить)</span>
+      <input name="topic" value="{{ form.topic }}" placeholder="Тема курса">
+    </label>
+  </div>
+  <label class="field">
+    <span>Описание</span>
+    <textarea name="description" rows="4" placeholder="Расскажите, чему научится студент и кому подойдёт курс">{{ form.description }}</textarea>
+  </label>
+  <div class="grid-2 stack-sm file-pair">
+    <label class="field file-field">
+      <span>Изображение интенсива *</span>
+      <input type="file" name="cover_image" accept="image/*" required>
+      <small class="muted">Добавьте яркую обложку, которая появится в поиске.</small>
+    </label>
+    <label class="field file-field">
+      <span>Видео-превью (необязательно)</span>
+      <input type="file" name="preview_clip" accept="video/*">
+      <small class="muted">Короткое превью, которое воспроизводится при наведении.</small>
+    </label>
+  </div>
+  <div class="videos-block" data-video-list>
+    <div class="videos-head">
+      <h3>Видео материалы</h3>
+      <button class="btn outline" type="button" data-video-add>Добавить видео</button>
+    </div>
+    <p class="muted small">Если видео весит слишком много, разделите его на несколько частей и загрузите их отдельно.</p>
+    <div class="video-items">
+      {% for meta in form.video_meta %}
+      <div class="video-item" data-video-item>
+        <div class="grid-2 stack-sm">
+          <label class="field">
+            <span>Название видео</span>
+            <input name="video_title[]" value="{{ meta.title }}" placeholder="Урок {{ loop.index }}">
+          </label>
+          <label class="field">
+            <span>Качество</span>
+            <input name="video_quality[]" value="{{ meta.quality }}" placeholder="Например, 1080p">
+          </label>
+        </div>
+        <label class="field file-field">
+          <span>Файл</span>
+          <input type="file" name="video_file[]" accept="video/*" {% if loop.first %}required{% endif %}>
+        </label>
+        <button class="remove-video" type="button" data-video-remove>Удалить видео</button>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="form-actions">
+    <a class="btn outline" href="{{ url_for('profile', tab='course') }}">Отмена</a>
+    <button class="btn strong" type="submit">Сохранить курс</button>
+  </div>
+</form>
+<template id="videoItemTemplate">
+  <div class="video-item" data-video-item>
+    <div class="grid-2 stack-sm">
+      <label class="field">
+        <span>Название видео</span>
+        <input name="video_title[]" placeholder="Новый урок">
+      </label>
+      <label class="field">
+        <span>Качество</span>
+        <input name="video_quality[]" placeholder="Например, 720p">
+      </label>
+    </div>
+    <label class="field file-field">
+      <span>Файл</span>
+      <input type="file" name="video_file[]" accept="video/*" required>
+    </label>
+    <button class="remove-video" type="button" data-video-remove>Удалить видео</button>
+  </div>
+</template>
+{% endblock %}

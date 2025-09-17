@@ -15,6 +15,7 @@ DEFAULT_AVATARS = {
     "specialist": "/static/img/lion_teacher.svg",
 }
 ALLOWED_IMG = {"png","jpg","jpeg","gif","webp"}
+ALLOWED_VIDEO = {"mp4", "mov", "avi", "mkv", "webm"}
 
 db = SQLAlchemy()
 
@@ -52,6 +53,17 @@ def avatar_url(user=None):
         return user.avatar
     return DEFAULT_AVATARS.get(getattr(user, "role", None) or "student", DEFAULT_AVATARS["student"])
 
+
+def format_price(amount):
+    if amount is None:
+        return ""
+    try:
+        value = int(amount)
+    except (TypeError, ValueError):
+        return str(amount)
+    return f"{value:,}".replace(",", " ") + " ₽"
+
+
 def current_user():
     uid = session.get("user_id")
     return User.query.get(uid) if uid else None
@@ -87,6 +99,7 @@ def create_app():
             theme=g.theme,
             current_user=current_user,
             avatar_url=avatar_url,  # функцию тоже пробрасываем в шаблоны
+            format_price=format_price,
         )
     app.before_request(_globals)
     app.context_processor(inject_i18n)
@@ -113,10 +126,12 @@ class User(db.Model):
     education = db.Column(db.String(255))
     graduation_year = db.Column(db.String(10))
     course_image = db.Column(db.String(255))
+    telegram = db.Column(db.String(120))
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
     student = db.relationship("StudentProfile", backref="user", uselist=False, cascade="all, delete-orphan")
     specialist = db.relationship("SpecialistProfile", backref="user", uselist=False, cascade="all, delete-orphan")
     posts = db.relationship("Post", backref="user", lazy=True, cascade="all, delete-orphan")
+    courses = db.relationship("Course", backref="owner", cascade="all, delete-orphan", order_by="Course.created_at")
 
 class StudentProfile(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -153,6 +168,29 @@ class Message(db.Model):
     sender_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
     text = db.Column(db.Text, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+
+
+class Course(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    title = db.Column(db.String(255), nullable=False)
+    subject = db.Column(db.String(255))
+    topic = db.Column(db.String(255))
+    description = db.Column(db.Text)
+    cover_image = db.Column(db.String(255))
+    preview_clip = db.Column(db.String(255))
+    price = db.Column(db.Integer)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    videos = db.relationship("CourseVideo", backref="course", cascade="all, delete-orphan", order_by="CourseVideo.order_index")
+
+
+class CourseVideo(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    course_id = db.Column(db.Integer, db.ForeignKey("course.id"), nullable=False)
+    title = db.Column(db.String(255))
+    file_path = db.Column(db.String(255), nullable=False)
+    quality_label = db.Column(db.String(50))
+    order_index = db.Column(db.Integer, default=0)
 
 # ---------- Хелперы ----------
 def login_required(f):
@@ -195,6 +233,8 @@ def ensure_schema():
         alters.append('ALTER TABLE "user" ADD COLUMN graduation_year VARCHAR(10)')
     if "course_image" not in user_cols:
         alters.append('ALTER TABLE "user" ADD COLUMN course_image VARCHAR(255)')
+    if "telegram" not in user_cols:
+        alters.append('ALTER TABLE "user" ADD COLUMN telegram VARCHAR(120)')
     if not alters:
         return
     # SQLAlchemy 2.x: сырые SQL через exec_driver_sql() или text(...)
@@ -386,7 +426,155 @@ def register_routes(app):
     @login_required
     def public_profile(user_id):
         person = User.query.get_or_404(user_id)
-        return render_template("user_public.html", person=person, avatar=avatar_url(person))
+        courses_payload = []
+        for course in sorted(person.courses, key=lambda c: c.created_at or datetime.datetime.utcnow(), reverse=True):
+            ordered_videos = sorted(course.videos, key=lambda v: (v.order_index or 0, v.id))
+            grouped = {}
+            for video in ordered_videos:
+                base_title = (video.title or "").strip()
+                if not base_title:
+                    base_title = f"Урок {len(grouped) + 1}"
+                if base_title not in grouped:
+                    grouped[base_title] = []
+                grouped[base_title].append(video)
+            lessons = []
+            for idx, (title, vids) in enumerate(grouped.items(), start=1):
+                sources = []
+                for v in vids:
+                    sources.append({
+                        "quality": v.quality_label or "Оригинал",
+                        "src": v.file_path,
+                    })
+                lessons.append({
+                    "order": idx,
+                    "title": title,
+                    "sources": sources,
+                })
+            courses_payload.append({
+                "course": course,
+                "lessons": lessons,
+                "video_total": len(ordered_videos),
+            })
+        return render_template("user_public.html", person=person, avatar=avatar_url(person), courses=courses_payload)
+
+    @app.route("/courses/new", methods=["GET","POST"])
+    @login_required
+    def course_create():
+        u = current_user()
+        if u.role != "specialist":
+            flash("Добавлять курсы могут только специалисты.", "error")
+            return redirect(url_for("profile", tab="course"))
+        form = {
+            "title": "",
+            "subject": "",
+            "topic": "",
+            "description": "",
+            "price": "",
+            "video_meta": [{"title": "", "quality": "Оригинал"}],
+        }
+        if request.method == "POST":
+            form["title"] = (request.form.get("title") or "").strip()
+            form["subject"] = (request.form.get("subject") or "").strip()
+            form["topic"] = (request.form.get("topic") or "").strip()
+            form["description"] = (request.form.get("description") or "").strip()
+            form["price"] = (request.form.get("price") or "").strip()
+            video_titles = [t.strip() for t in request.form.getlist("video_title[]")]
+            video_qualities = [q.strip() for q in request.form.getlist("video_quality[]")]
+            meta = []
+            for idx in range(max(len(video_titles), 1)):
+                title = video_titles[idx] if idx < len(video_titles) else ""
+                quality = video_qualities[idx] if idx < len(video_qualities) else "Оригинал"
+                meta.append({"title": title, "quality": quality or "Оригинал"})
+            form["video_meta"] = meta or [{"title": "", "quality": "Оригинал"}]
+            errors = []
+            if not form["title"]:
+                errors.append("Укажите заголовок курса.")
+            price_value = None
+            if form["price"]:
+                try:
+                    price_value = int(round(float(form["price"].replace(",", "."))))
+                    if price_value < 0:
+                        raise ValueError
+                except ValueError:
+                    errors.append("Цена должна быть числом.")
+            else:
+                errors.append("Укажите цену интенсива.")
+            cover = request.files.get("cover_image")
+            if not cover or not cover.filename:
+                errors.append("Загрузите изображение интенсива.")
+            preview_clip = request.files.get("preview_clip")
+            video_files = request.files.getlist("video_file[]")
+            prepared_videos = []
+            for idx, meta_info in enumerate(form["video_meta"]):
+                file = video_files[idx] if idx < len(video_files) else None
+                if file and file.filename:
+                    ext = file.filename.rsplit(".", 1)[-1].lower()
+                    if ext not in ALLOWED_VIDEO:
+                        errors.append(f"Формат видео {file.filename} не поддерживается.")
+                        continue
+                    title = meta_info.get("title") or f"Урок {idx+1}"
+                    quality = meta_info.get("quality") or "Оригинал"
+                    prepared_videos.append({
+                        "file": file,
+                        "title": title,
+                        "quality": quality,
+                        "ext": ext,
+                    })
+            if not prepared_videos:
+                errors.append("Добавьте хотя бы одно видео.")
+            if preview_clip and preview_clip.filename:
+                preview_ext = preview_clip.filename.rsplit(".", 1)[-1].lower()
+                if preview_ext not in ALLOWED_VIDEO:
+                    errors.append("Формат файла превью не поддерживается.")
+            if cover and cover.filename:
+                cover_ext = cover.filename.rsplit(".", 1)[-1].lower()
+                if cover_ext not in ALLOWED_IMG:
+                    errors.append("Формат изображения не поддерживается.")
+            if errors:
+                for err in errors:
+                    flash(err, "error")
+                return render_template("course_form.html", form=form)
+            course = Course(
+                user_id=u.id,
+                title=form["title"],
+                subject=form["subject"] or None,
+                topic=form["topic"] or None,
+                description=form["description"] or None,
+                price=price_value,
+            )
+            db.session.add(course)
+            db.session.flush()
+            course_dir = os.path.join(UPLOAD_FOLDER, "courses", f"user{u.id}", f"course{course.id}")
+            os.makedirs(course_dir, exist_ok=True)
+            cover_ext = cover.filename.rsplit(".", 1)[-1].lower()
+            cover_filename = secure_filename(f"cover.{cover_ext}")
+            cover_path = os.path.join(course_dir, cover_filename)
+            cover.save(cover_path)
+            course.cover_image = "/".join(["", "uploads", "courses", f"user{u.id}", f"course{course.id}", cover_filename])
+            if preview_clip and preview_clip.filename:
+                preview_ext = preview_clip.filename.rsplit(".", 1)[-1].lower()
+                preview_filename = secure_filename(f"preview.{preview_ext}")
+                preview_path = os.path.join(course_dir, preview_filename)
+                preview_clip.save(preview_path)
+                course.preview_clip = "/".join(["", "uploads", "courses", f"user{u.id}", f"course{course.id}", preview_filename])
+            videos_dir = os.path.join(course_dir, "videos")
+            os.makedirs(videos_dir, exist_ok=True)
+            for order, video in enumerate(prepared_videos):
+                filename = secure_filename(f"video{order+1}_{datetime.datetime.utcnow().timestamp():.0f}.{video['ext']}")
+                file_path = os.path.join(videos_dir, filename)
+                video["file"].save(file_path)
+                rel_path = "/".join(["", "uploads", "courses", f"user{u.id}", f"course{course.id}", "videos", filename])
+                db.session.add(CourseVideo(
+                    course_id=course.id,
+                    title=video["title"],
+                    file_path=rel_path,
+                    quality_label=video["quality"],
+                    order_index=order,
+                ))
+            db.session.commit()
+            flash("Курс опубликован!", "ok")
+            return redirect(url_for("profile", tab="course"))
+        return render_template("course_form.html", form=form)
 
     class ConvHelper:
         @staticmethod
@@ -436,6 +624,12 @@ def register_routes(app):
         tab = request.args.get("tab") or request.form.get("tab") or "summary"
         if tab not in ("summary","about","course"):
             tab = "summary"
+        courses_data = []
+        for course in sorted(u.courses, key=lambda c: c.created_at or datetime.datetime.utcnow(), reverse=True):
+            courses_data.append({
+                "course": course,
+                "video_count": len(course.videos),
+            })
         if request.method == "POST":
             action = request.form.get("action")
             if action == "about":
@@ -462,6 +656,11 @@ def register_routes(app):
                     flash("Год выпуска должен состоять из цифр.","error")
                     return redirect(url_for("profile", tab="about"))
                 u.graduation_year = grad or None
+                telegram_val = request.form.get("telegram","").strip()
+                if not telegram_val:
+                    flash("Укажите ник в Telegram.", "error")
+                    return redirect(url_for("profile", tab="about"))
+                u.telegram = telegram_val
                 file = request.files.get("avatar")
                 if file and file.filename:
                     ext = file.filename.rsplit(".",1)[-1].lower()
@@ -476,24 +675,7 @@ def register_routes(app):
                 db.session.commit()
                 flash("Профиль обновлён.","ok")
                 return redirect(url_for("profile"))
-            if action == "course":
-                if "cancel" in request.form:
-                    return redirect(url_for("profile"))
-                cover = request.files.get("course_image")
-                if cover and cover.filename:
-                    ext = cover.filename.rsplit(".",1)[-1].lower()
-                    if ext in ALLOWED_IMG:
-                        path = os.path.join(UPLOAD_FOLDER, "courses", secure_filename(f"user{u.id}_course.{ext}"))
-                        os.makedirs(os.path.dirname(path), exist_ok=True)
-                        cover.save(path)
-                        u.course_image = "/uploads/courses/" + os.path.basename(path)
-                    else:
-                        flash("Неподдерживаемый формат файла.","error")
-                        return redirect(url_for("profile", tab="course"))
-                db.session.commit()
-                flash("Изображение курса обновлено.","ok")
-                return redirect(url_for("profile", tab="course"))
-        return render_template("profile.html", user=u, tab=tab, avatar=avatar_url(u))
+        return render_template("profile.html", user=u, tab=tab, avatar=avatar_url(u), courses=courses_data)
 
     @app.route("/uploads/<path:filename>")
     def uploaded(filename):

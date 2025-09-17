@@ -13,13 +13,69 @@
     <p>Возраст: {{ person.age or '—' }}</p>
     <p>Образование: {{ person.education or '—' }}</p>
     <p>Год выпуска: {{ person.graduation_year or '—' }}</p>
+    <p>Телеграм: {{ person.telegram or '—' }}</p>
   </div>
   <div class="card public-right">
-    <h2>Мой курс</h2>
-    {% if person.course_image %}
-      <div class="course-image" style="background-image:url('{{ person.course_image }}')"></div>
+    <h2>Курсы</h2>
+    {% if courses %}
+      {% for data in courses %}
+        {% set course = data.course %}
+        <article class="course-detail" data-course-player>
+          <header class="course-detail-header">
+            <div class="course-detail-cover" {% if course.cover_image %}style="background-image:url('{{ course.cover_image }}')"{% endif %}>
+              {% if data.video_total %}
+              <span class="course-count">{{ data.video_total }} видео</span>
+              {% endif %}
+              {% if course.price is not none %}
+              <span class="price-tag">{{ format_price(course.price) }}</span>
+              {% endif %}
+              {% if course.preview_clip %}
+              <div class="hover-video" data-preview-hover>
+                <video src="{{ course.preview_clip }}" muted loop preload="metadata" {% if course.cover_image %}poster="{{ course.cover_image }}"{% endif %}></video>
+              </div>
+              {% endif %}
+            </div>
+            <div class="course-detail-meta">
+              <h3>{{ course.title }}</h3>
+              <div class="muted">{{ course.subject or 'Без предмета' }}{% if course.topic %} · {{ course.topic }}{% endif %}</div>
+              {% if course.description %}<p>{{ course.description }}</p>{% endif %}
+            </div>
+          </header>
+          {% if data.lessons %}
+          <div class="course-player" data-player>
+            <video controls preload="metadata" data-video {% if course.cover_image %}poster="{{ course.cover_image }}"{% endif %}>
+              {% set first_lesson = data.lessons[0] %}
+              {% set first_source = first_lesson.sources[0] %}
+              <source src="{{ first_source.src }}">
+            </video>
+            <div class="player-controls">
+              <label>Качество
+                <select data-quality-select>
+                  {% for source in first_lesson.sources %}
+                  <option value="{{ source.src }}">{{ source.quality }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+            </div>
+            <ul class="playlist" data-playlist>
+              {% for lesson in data.lessons %}
+              <li class="playlist-item {% if loop.first %}active{% endif %}" data-sources='{{ lesson.sources | tojson }}' data-title="{{ lesson.title }}" data-poster="{{ course.cover_image or '' }}">
+                <span class="playlist-index">{{ loop.index }}</span>
+                <div>
+                  <div class="playlist-title">{{ lesson.title }}</div>
+                  <div class="muted small">{{ lesson.sources|length }} вариант(а) качества</div>
+                </div>
+              </li>
+              {% endfor %}
+            </ul>
+          </div>
+          {% else %}
+          <p class="muted">В этом курсе пока нет загруженных видео.</p>
+          {% endif %}
+        </article>
+      {% endfor %}
     {% else %}
-      <div class="course-placeholder">Курса пока нет</div>
+      <div class="course-placeholder">Специалист ещё не добавил курс.</div>
     {% endif %}
   </div>
 </section>
