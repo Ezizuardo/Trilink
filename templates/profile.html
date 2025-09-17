@@ -39,6 +39,10 @@
       <input name="nickname" value="{{ user.nickname or '' }}" placeholder="@nickname">
     </label>
     <label class="field">
+      <span>Ник в Telegram</span>
+      <input name="telegram" value="{{ user.telegram or '' }}" placeholder="@telegram" required>
+    </label>
+    <label class="field">
       <span>Возраст</span>
       <input name="age" value="{{ user.age or '' }}" placeholder="18" inputmode="numeric">
     </label>
@@ -58,45 +62,81 @@
     </label>
     <span class="muted">Форматы: png, jpg, jpeg, gif, webp</span>
   </div>
+  <div class="profile-note">
+    <strong>Почта:</strong> {{ user.email }} <span class="muted">(видно только вам)</span>
+  </div>
   <div class="form-actions">
     <button class="btn strong" type="submit">Сохранить</button>
     <button class="btn outline" type="submit" name="cancel" value="1">Отмена</button>
   </div>
 </form>
 {% elif tab == 'course' %}
-<form class="card profile-form" method="post" enctype="multipart/form-data">
-  <input type="hidden" name="action" value="course">
-  <div class="course-preview">
-    {% if user.course_image %}
-      <div class="course-image" style="background-image:url('{{ user.course_image }}')"></div>
-    {% else %}
-      <div class="course-placeholder">Курса пока нет</div>
-    {% endif %}
+<section class="card course-manage">
+  <div class="course-manage-header">
+    <div>
+      <h3>Мои интенсивы</h3>
+      <p class="muted">Добавьте курс с подробным описанием, видео и обложкой.</p>
+    </div>
+    <a class="btn strong" href="{{ url_for('course_create') }}">Добавить курс</a>
   </div>
-  <label class="file-btn">
-    <span class="btn outline">Загрузить изображение курса</span>
-    <input type="file" name="course_image" accept="image/*">
-  </label>
-  <div class="form-actions">
-    <button class="btn strong" type="submit">Сохранить</button>
-    <button class="btn outline" type="submit" name="cancel" value="1">Отмена</button>
+  {% if courses %}
+  <div class="course-grid">
+    {% for item in courses %}
+      {% set course = item.course %}
+      <div class="course-card-mini">
+        <div class="course-thumb" {% if course.cover_image %}style="background-image:url('{{ course.cover_image }}')"{% endif %}>
+          {% if item.video_count %}
+          <span class="course-count">{{ item.video_count }} видео</span>
+          {% endif %}
+          {% if course.price is not none %}
+          <span class="price-tag">{{ format_price(course.price) }}</span>
+          {% endif %}
+        </div>
+        <div class="course-info">
+          <h4>{{ course.title }}</h4>
+          <p class="muted">{{ course.subject or 'Без предмета' }}{% if course.topic %} · {{ course.topic }}{% endif %}</p>
+        </div>
+      </div>
+    {% endfor %}
   </div>
-</form>
+  {% else %}
+  <div class="course-empty">
+    <p>Курсы пока не добавлены.</p>
+    <a class="btn outline" href="{{ url_for('course_create') }}">Создать первый курс</a>
+  </div>
+  {% endif %}
+</section>
 {% else %}
 <section class="card profile-overview">
   <h3>О себе</h3>
   <p>Имя: <strong>{{ user.first_name or '—' }}</strong></p>
   <p>Фамилия: <strong>{{ user.last_name or '—' }}</strong></p>
   <p>Ник: <strong>@{{ user.nickname or '—' }}</strong></p>
+  <p>Телеграм: <strong>{{ user.telegram or '—' }}</strong></p>
   <p>Возраст: <strong>{{ user.age or '—' }}</strong></p>
   <p>Образование: <strong>{{ user.education or '—' }}</strong></p>
   <p>Год выпуска: <strong>{{ user.graduation_year or '—' }}</strong></p>
+  <p>Почта: <strong>{{ user.email }}</strong> <span class="muted">(видно только вам)</span></p>
   <div class="course-preview">
-    <h3>Мой курс</h3>
-    {% if user.course_image %}
-      <div class="course-image" style="background-image:url('{{ user.course_image }}')"></div>
+    <h3>Мои интенсивы</h3>
+    {% if courses %}
+    <div class="course-grid">
+      {% for item in courses %}
+        {% set course = item.course %}
+        <div class="course-card-mini compact">
+          <div class="course-thumb" {% if course.cover_image %}style="background-image:url('{{ course.cover_image }}')"{% endif %}>
+            {% if item.video_count %}<span class="course-count">{{ item.video_count }} видео</span>{% endif %}
+            {% if course.price is not none %}<span class="price-tag">{{ format_price(course.price) }}</span>{% endif %}
+          </div>
+          <div class="course-info">
+            <h4>{{ course.title }}</h4>
+            <p class="muted">{{ course.subject or 'Без предмета' }}{% if course.topic %} · {{ course.topic }}{% endif %}</p>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
     {% else %}
-      <div class="course-placeholder">Курса пока нет</div>
+    <div class="course-placeholder">Курсы пока не добавлены.</div>
     {% endif %}
   </div>
 </section>
