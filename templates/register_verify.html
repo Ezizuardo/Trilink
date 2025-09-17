@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Подтверждение регистрации{% endblock %}
+{% block content %}
+<div class="login-centered">
+  <div class="login-card card">
+    <h1>Подтверждение</h1>
+    <p class="muted">Введите код, который появился в консоли сервера. Мы сохранили его для адреса <strong>{{ email }}</strong>.</p>
+    <form method="post" class="form">
+      <input type="hidden" name="stage" value="verify">
+      <label>Код подтверждения<input name="code" placeholder="123456" required inputmode="numeric"></label>
+      <button class="btn strong" type="submit">Подтвердить</button>
+    </form>
+    <div class="muted foot-note"><a href="{{ url_for('register_role', role=role, reset=1) }}">Изменить почту?</a></div>
+  </div>
+</div>
+{% endblock %}

@@ -1,14 +1,19 @@
 # -*- coding: utf-8 -*-
-import os, json, datetime, random
+import os, datetime, random
 from flask import Flask, render_template, request, redirect, url_for, flash, session, send_from_directory, g
 from flask_sqlalchemy import SQLAlchemy
 from passlib.hash import argon2
 from werkzeug.utils import secure_filename
-from sqlalchemy import inspect, text
+
+from sqlalchemy import inspect, text  # SQLAlchemy 2.x: инспектор и text
+
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
-DEFAULT_AVATAR = "/static/img/monkey.png"
+DEFAULT_AVATARS = {
+    "student": "/static/img/lion_student.svg",
+    "specialist": "/static/img/lion_teacher.svg",
+}
 ALLOWED_IMG = {"png","jpg","jpeg","gif","webp"}
 
 db = SQLAlchemy()
@@ -38,6 +43,19 @@ RU = {"login_title":"Вход","email":"Email","password":"Пароль","sign_i
 EN = {"login_title":"Sign in","email":"Email","password":"Password","sign_in":"Sign in","register":"Register","feed":"Feed","search":"Search","chat":"Chat","notifications":"Notifications","plan":"My plan","profile_title":"Profile","complete_profile":"Complete your profile","close":"Close","welcome_title":"Welcome!","tagline":"Find your specialist!","first_time":"New here?","signup":"Sign up","submit":"Next","cancel":"Cancel","name_title":"Tell us about you","first_name":"First name","last_name":"Last name","avatar_title":"Avatar","nickname_title":"Choose a nickname","suggestions":"Suggestions","university":"University"}
 def tr(lang, key): return (RU if lang=="ru" else EN).get(key, key)
 
+# ---------- Глобальные утилиты ----------
+def avatar_url(user=None):
+    """Единая точка получения URL аватара (глобальная, доступна во всех view)."""
+    if not user:
+        return DEFAULT_AVATARS["student"]
+    if getattr(user, "avatar", None):
+        return user.avatar
+    return DEFAULT_AVATARS.get(getattr(user, "role", None) or "student", DEFAULT_AVATARS["student"])
+
+def current_user():
+    uid = session.get("user_id")
+    return User.query.get(uid) if uid else None
+
 def create_app():
     app = Flask(__name__, instance_relative_config=True, static_folder="static", template_folder="templates")
     app.config.from_mapping(
@@ -54,10 +72,11 @@ def create_app():
     os.makedirs(app.instance_path, exist_ok=True)
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
     os.makedirs(os.path.join(UPLOAD_FOLDER,"avatars"), exist_ok=True)
+    os.makedirs(os.path.join(UPLOAD_FOLDER,"courses"), exist_ok=True)
 
     db.init_app(app)
 
-    # Register hooks without decorators to keep linters happy
+    # Глобальные значения в g и контекст в шаблонах
     def _globals():
         g.lang = session.get("lang", "ru")
         g.theme = session.get("theme", "dark")
@@ -67,6 +86,7 @@ def create_app():
             lang=g.lang,
             theme=g.theme,
             current_user=current_user,
+            avatar_url=avatar_url,  # функцию тоже пробрасываем в шаблоны
         )
     app.before_request(_globals)
     app.context_processor(inject_i18n)
@@ -78,7 +98,7 @@ def create_app():
     register_routes(app)
     return app
 
-# Models
+# ---------- Модели ----------
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(255), unique=True, nullable=False)
@@ -89,11 +109,13 @@ class User(db.Model):
     last_name = db.Column(db.String(120))
     nickname = db.Column(db.String(120), unique=True)
     avatar = db.Column(db.String(255))
+    age = db.Column(db.Integer)
+    education = db.Column(db.String(255))
+    graduation_year = db.Column(db.String(10))
+    course_image = db.Column(db.String(255))
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
-    # one-to-one profiles
     student = db.relationship("StudentProfile", backref="user", uselist=False, cascade="all, delete-orphan")
     specialist = db.relationship("SpecialistProfile", backref="user", uselist=False, cascade="all, delete-orphan")
-    # posts relationship
     posts = db.relationship("Post", backref="user", lazy=True, cascade="all, delete-orphan")
 
 class StudentProfile(db.Model):
@@ -132,10 +154,7 @@ class Message(db.Model):
     text = db.Column(db.Text, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
 
-def current_user():
-    uid = session.get("user_id")
-    return User.query.get(uid) if uid else None
-
+# ---------- Хелперы ----------
 def login_required(f):
     from functools import wraps
     @wraps(f)
@@ -148,9 +167,9 @@ def login_required(f):
 def ensure_bots():
     if User.query.filter_by(email="alice@bots.dev").first(): return
     bots = [
-        ("alice@bots.dev","specialist","Alice","Johnson","alice-tutor","/static/img/monkey.png","математика, ЕГЭ","Магистр","МГУ",
+        ("alice@bots.dev","specialist","Alice","Johnson","alice-tutor",DEFAULT_AVATARS["specialist"],"математика, ЕГЭ","Магистр","МГУ",
          [("Линал: с чего начать","Сводка тем.","")]),
-        ("bob@bots.dev","specialist","Bob","Lee","bob-coder","/static/img/monkey.png","python, алгоритмы","Магистр","ИТМО",
+        ("bob@bots.dev","specialist","Bob","Lee","bob-coder",DEFAULT_AVATARS["specialist"],"python, алгоритмы","Магистр","ИТМО",
          [("Python: 3 практики","Заметки для старта.","")]),
     ]
     for email, role, fn, ln, nick, avatar, kw, deg, work, posts in bots:
@@ -162,10 +181,34 @@ def ensure_bots():
             db.session.add(Post(user_id=u.id, title=title, summary=summary, image=img))
         db.session.commit()
 
+def ensure_schema():
+    engine = db.engine
+    inspector = inspect(engine)
+    user_cols = {col["name"] for col in inspector.get_columns("user")}
+    alters = []
+    # Экранируем имя таблицы "user" — кросс-СУБД безопаснее
+    if "age" not in user_cols:
+        alters.append('ALTER TABLE "user" ADD COLUMN age INTEGER')
+    if "education" not in user_cols:
+        alters.append('ALTER TABLE "user" ADD COLUMN education VARCHAR(255)')
+    if "graduation_year" not in user_cols:
+        alters.append('ALTER TABLE "user" ADD COLUMN graduation_year VARCHAR(10)')
+    if "course_image" not in user_cols:
+        alters.append('ALTER TABLE "user" ADD COLUMN course_image VARCHAR(255)')
+    if not alters:
+        return
+    # SQLAlchemy 2.x: сырые SQL через exec_driver_sql() или text(...)
+    with engine.begin() as conn:
+        for stmt in alters:
+            conn.exec_driver_sql(stmt)
+            # альтернатива:
+            # conn.execute(text(stmt))
+
 def translit(s):
     table = {'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'e','ж':'zh','з':'z','и':'i','й':'y','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r','с':'s','т':'t','у':'u','ф':'f','х':'h','ц':'c','ч':'ch','ш':'sh','щ':'sch','ъ':'','ы':'y','ь':'','э':'e','ю':'yu','я':'ya'}
     return ''.join(table.get(ch, ch) for ch in (s or '').lower())
 
+# ---------- Роуты ----------
 def register_routes(app):
     @app.route("/set-theme/<theme>")
     def set_theme(theme):
@@ -193,7 +236,7 @@ def register_routes(app):
             session.clear(); session["user_id"] = user.id; session.permanent = True
             if remember: app.permanent_session_lifetime = datetime.timedelta(days=int(app.config.get("REMEMBER_DAYS",30)))
             else: app.permanent_session_lifetime = datetime.timedelta(days=int(app.config.get("SESSION_DAYS",7)))
-            return redirect(url_for("feed"))
+            return redirect(url_for("profile"))
         return render_template("login_single.html")
 
     @app.route("/register")
@@ -204,7 +247,32 @@ def register_routes(app):
     def register_role(role):
         role = role.lower()
         if role not in ("student","specialist"): return redirect(url_for("register"))
+        if request.args.get("reset"):
+            session.pop("pending_user", None)
+        pending = session.get("pending_user")
         if request.method == "POST":
+            stage = request.form.get("stage")
+            if stage == "verify":
+                code = (request.form.get("code") or "").strip()
+                if not pending or pending.get("role") != role:
+                    flash("Сессия подтверждения истекла.","error")
+                    return redirect(url_for("register_role", role=role))
+                if code != pending.get("code"):
+                    flash("Неверный код подтверждения.","error")
+                    return render_template("register_verify.html", role=role, email=pending.get("email"))
+                if User.query.filter_by(email=pending.get("email")).first():
+                    flash("Почта уже зарегистрирована. Войдите.","error")
+                    session.pop("pending_user", None)
+                    return redirect(url_for("login_single"))
+                u = User(email=pending["email"], role=role, password_hash=argon2.hash(pending["password"]))
+                if role=="student":
+                    u.student = StudentProfile()
+                else:
+                    u.specialist = SpecialistProfile()
+                db.session.add(u); db.session.commit()
+                session.clear(); session["user_id"]=u.id; session.permanent=True
+                flash("Регистрация подтверждена.","ok")
+                return redirect(url_for("profile", tab="about"))
             email = request.form.get("email","").strip().lower()
             password = request.form.get("password","")
             confirm = request.form.get("confirm","")
@@ -214,12 +282,13 @@ def register_routes(app):
                 flash("Укажите почту и пароль.","error"); return render_template("register_role.html", role=role)
             if User.query.filter_by(email=email).first():
                 flash("Почта уже зарегистрирована. Войдите.", "error"); return redirect(url_for("login_single"))
-            u = User(email=email, role=role, password_hash=argon2.hash(password))
-            if role=="student": u.student = StudentProfile()
-            else: u.specialist = SpecialistProfile()
-            db.session.add(u); db.session.commit()
-            session.clear(); session["user_id"]=u.id; session.permanent=True
-            return redirect(url_for("onb_name"))
+            code = f"{random.randint(100000, 999999)}"
+            session["pending_user"] = {"email": email, "password": password, "role": role, "code": code}
+            print(f"[TriLink] Verification code for {email}: {code}")
+            flash("Код подтверждения отправлен. Проверьте консоль приложения.", "ok")
+            return render_template("register_verify.html", role=role, email=email)
+        if pending and pending.get("role") == role:
+            return render_template("register_verify.html", role=role, email=pending.get("email"))
         return render_template("register_role.html", role=role)
 
     @app.route("/onboarding/name", methods=["GET","POST"])
@@ -236,7 +305,7 @@ def register_routes(app):
                 else:
                     u.student.looking_for = uni
             db.session.commit()
-            if "cancel" in request.form: return redirect(url_for("feed"))
+            if "cancel" in request.form: return redirect(url_for("profile"))
             return redirect(url_for("onb_avatar"))
         return render_template("onb_name.html")
 
@@ -252,9 +321,10 @@ def register_routes(app):
                     path = os.path.join(UPLOAD_FOLDER,"avatars", secure_filename(f"user{u.id}_avatar.{ext}"))
                     os.makedirs(os.path.dirname(path), exist_ok=True)
                     file.save(path); u.avatar = "/uploads/avatars/" + os.path.basename(path); db.session.commit()
-            if "cancel" in request.form: return redirect(url_for("feed"))
+            if "cancel" in request.form: return redirect(url_for("profile"))
             return redirect(url_for("onb_nick"))
-        return render_template("onb_avatar.html", avatar_url=u.avatar or DEFAULT_AVATAR)
+        # здесь нужно строковое значение URL для предпросмотра
+        return render_template("onb_avatar.html", avatar_url=avatar_url(u))
 
     @app.route("/onboarding/nickname", methods=["GET","POST"])
     @login_required
@@ -264,7 +334,7 @@ def register_routes(app):
         base_last = translit(u.last_name or "new")
         suggestions = [f"{base_first}-{base_last}", f"{base_first}.{base_last}1", f"{base_last}{base_first}"]
         if request.method=="POST":
-            if "cancel" in request.form: return redirect(url_for("feed"))
+            if "cancel" in request.form: return redirect(url_for("profile"))
             nick = request.form.get("nickname","").strip()
             deny = set(["admin","support","moderator","romie","trilink","superuser","help","owner"])
             if not nick or nick.lower() in deny or User.query.filter(User.nickname==nick, User.id!=u.id).first():
@@ -282,21 +352,41 @@ def register_routes(app):
     @app.route("/feed")
     @login_required
     def feed():
-        ensure_bots()
-        posts = Post.query.order_by(Post.created_at.desc()).all()
-        return render_template("feed.html", posts=posts)
+        message = "Совсем скоро будет доступно!"
+        posts = []
+        # ensure_bots()  # оставлено закомментированным до включения ленты
+        return render_template("feed.html", posts=posts, disabled_message=message)
 
     @app.route("/search")
     @login_required
     def search():
-        q = request.args.get("q","").strip().lower()
-        people = User.query.filter_by(role="specialist").all()
-        if q:
+        q = (request.args.get("q") or "").strip()
+        q_clean = q.lstrip("@").lower()
+        ensure_bots()
+        people = User.query.order_by(User.created_at.desc()).all()
+        if q_clean:
             def match(p):
-                data = " ".join([p.first_name or "", p.last_name or "", p.nickname or "", (p.specialist.keywords if p.specialist else "")])
-                return q in data.lower()
+                hay = " ".join(filter(None, [
+                    p.first_name or "",
+                    p.last_name or "",
+                    p.nickname or "",
+                    p.role or "",
+                    (p.specialist.keywords if p.specialist else ""),
+                    (p.student.looking_for if p.student else ""),
+                ])).lower()
+                return q_clean in hay
             people = list(filter(match, people))
         return render_template("search.html", people=people, q=q)
+
+    @app.route("/support")
+    def support_redirect():
+        return redirect("https://t.me/ezizkafromag")
+
+    @app.route("/people/<int:user_id>")
+    @login_required
+    def public_profile(user_id):
+        person = User.query.get_or_404(user_id)
+        return render_template("user_public.html", person=person, avatar=avatar_url(person))
 
     class ConvHelper:
         @staticmethod
@@ -331,19 +421,79 @@ def register_routes(app):
             flash("Нельзя писать самому себе.","error"); return redirect(url_for("chat_index"))
         c = ConvHelper.get_or_create(me, user_id)
         if request.method == "POST":
-            text = (request.form.get("text") or "").strip()
-            if text:
-                db.session.add(Message(conversation_id=c.id, sender_id=me, text=text)); db.session.commit()
+            text_ = (request.form.get("text") or "").strip()
+            if text_:
+                db.session.add(Message(conversation_id=c.id, sender_id=me, text=text_)); db.session.commit()
         msgs = Message.query.filter_by(conversation_id=c.id).order_by(Message.created_at.asc()).all()
         other_id = [m.user_id for m in ConversationMember.query.filter_by(conversation_id=c.id).all() if m.user_id!=me][0]
         other = User.query.get(other_id)
         return render_template("chat_with.html", other=other, messages=msgs)
 
-    @app.route("/profile")
+    @app.route("/profile", methods=["GET","POST"])
     @login_required
     def profile():
         u = current_user()
-        return render_template("profile.html", user=u, avatar_url=u.avatar or DEFAULT_AVATAR)
+        tab = request.args.get("tab") or request.form.get("tab") or "summary"
+        if tab not in ("summary","about","course"):
+            tab = "summary"
+        if request.method == "POST":
+            action = request.form.get("action")
+            if action == "about":
+                if "cancel" in request.form:
+                    return redirect(url_for("profile"))
+                u.first_name = request.form.get("first_name","").strip() or None
+                u.last_name = request.form.get("last_name","").strip() or None
+                nickname = request.form.get("nickname","").strip() or None
+                if nickname:
+                    existing = User.query.filter(User.nickname==nickname, User.id!=u.id).first()
+                    if existing:
+                        flash("Никнейм уже занят.","error")
+                        return redirect(url_for("profile", tab="about"))
+                u.nickname = nickname
+                age_val = request.form.get("age","").strip()
+                try:
+                    u.age = int(age_val) if age_val else None
+                except ValueError:
+                    flash("Возраст должен быть числом.","error")
+                    return redirect(url_for("profile", tab="about"))
+                u.education = request.form.get("education","").strip() or None
+                grad = request.form.get("graduation_year","").strip()
+                if grad and (not grad.isdigit() or len(grad) not in (2,4)):
+                    flash("Год выпуска должен состоять из цифр.","error")
+                    return redirect(url_for("profile", tab="about"))
+                u.graduation_year = grad or None
+                file = request.files.get("avatar")
+                if file and file.filename:
+                    ext = file.filename.rsplit(".",1)[-1].lower()
+                    if ext in ALLOWED_IMG:
+                        path = os.path.join(UPLOAD_FOLDER,"avatars", secure_filename(f"user{u.id}_avatar.{ext}"))
+                        os.makedirs(os.path.dirname(path), exist_ok=True)
+                        file.save(path)
+                        u.avatar = "/uploads/avatars/" + os.path.basename(path)
+                    else:
+                        flash("Неподдерживаемый формат файла.","error")
+                        return redirect(url_for("profile", tab="about"))
+                db.session.commit()
+                flash("Профиль обновлён.","ok")
+                return redirect(url_for("profile"))
+            if action == "course":
+                if "cancel" in request.form:
+                    return redirect(url_for("profile"))
+                cover = request.files.get("course_image")
+                if cover and cover.filename:
+                    ext = cover.filename.rsplit(".",1)[-1].lower()
+                    if ext in ALLOWED_IMG:
+                        path = os.path.join(UPLOAD_FOLDER, "courses", secure_filename(f"user{u.id}_course.{ext}"))
+                        os.makedirs(os.path.dirname(path), exist_ok=True)
+                        cover.save(path)
+                        u.course_image = "/uploads/courses/" + os.path.basename(path)
+                    else:
+                        flash("Неподдерживаемый формат файла.","error")
+                        return redirect(url_for("profile", tab="course"))
+                db.session.commit()
+                flash("Изображение курса обновлено.","ok")
+                return redirect(url_for("profile", tab="course"))
+        return render_template("profile.html", user=u, tab=tab, avatar=avatar_url(u))
 
     @app.route("/uploads/<path:filename>")
     def uploaded(filename):

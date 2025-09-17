@@ -1,12 +1,16 @@
 {% extends "base.html" %}
 {% block title %}{{ t('feed') }}{% endblock %}
 {% block content %}
-<h1>🏠 {{ t('feed') }}</h1>
+<h1><span class="icon icon-feed"></span>{{ t('feed') }}</h1>
+<div class="card disabled-card">
+  {{ disabled_message or 'Совсем скоро будет доступно!' }}
+</div>
+<!--
 <div class="feed">
   {% for p in posts %}
   <article class="post card">
     <header class="post-h">
-      <img class="avatar-mini" src="{{ (p.user.avatar if p.user else None) or url_for('static', filename='img/monkey.png') }}">
+      <img class="avatar-mini" src="{{ avatar_url(p.user) }}">
       <div>
         <div class="name">{{ (p.user.first_name if p.user else '') }} {{ (p.user.last_name if p.user else '') }} · @{{ (p.user.nickname if p.user else '') }}</div>
         <div class="meta">{{ p.created_at.strftime('%d %b %Y %H:%M') }}</div>
@@ -17,4 +21,5 @@
   </article>
   {% endfor %}
 </div>
+-->
 {% endblock %}

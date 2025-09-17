@@ -1,11 +1,104 @@
 {% extends "base.html" %}
 {% block title %}{{ t('profile_title') }}{% endblock %}
 {% block content %}
-<h1>👤 {{ t('profile_title') }}</h1>
-<section class="card"><h2>Общие данные</h2>
-  <div class="row">
-    <div class="col"><div>Имя: {{ user.first_name or '-' }}</div><div>Фамилия: {{ user.last_name or '-' }}</div><div>Ник: @{{ user.nickname or '—' }}</div></div>
-    <div class="col avatar-col"><img class="avatar" src="{{ avatar_url }}" alt="avatar"></div>
+<h1><span class="icon icon-profile"></span>{{ t('profile_title') }}</h1>
+<section class="card profile-card">
+  <div class="profile-avatar">
+    <img class="avatar" src="{{ avatar }}" alt="avatar">
+  </div>
+  <div class="profile-main">
+    <h2>{{ user.first_name or 'Без имени' }} {{ user.last_name or '' }}</h2>
+    <div class="muted">@{{ user.nickname or 'без_ника' }} · {{ 'Специалист' if user.role=='specialist' else 'Ученик' }}</div>
+    <div class="profile-meta">
+      <div><span class="label">Возраст</span><span class="value">{{ user.age or '—' }}</span></div>
+      <div><span class="label">Образование</span><span class="value">{{ user.education or '—' }}</span></div>
+      <div><span class="label">Год выпуска</span><span class="value">{{ user.graduation_year or '—' }}</span></div>
+    </div>
+    <div class="profile-tabs">
+      <a class="tab {{ 'active' if tab=='summary' else '' }}" href="{{ url_for('profile') }}">Обзор</a>
+      <a class="tab {{ 'active' if tab=='about' else '' }}" href="{{ url_for('profile', tab='about') }}">О себе</a>
+      <a class="tab {{ 'active' if tab=='course' else '' }}" href="{{ url_for('profile', tab='course') }}">Мой курс</a>
+    </div>
   </div>
 </section>
+
+{% if tab == 'about' %}
+<form class="card profile-form" method="post" enctype="multipart/form-data">
+  <input type="hidden" name="action" value="about">
+  <div class="grid-2">
+    <label class="field">
+      <span>Имя</span>
+      <input name="first_name" value="{{ user.first_name or '' }}" placeholder="Имя">
+    </label>
+    <label class="field">
+      <span>Фамилия</span>
+      <input name="last_name" value="{{ user.last_name or '' }}" placeholder="Фамилия">
+    </label>
+    <label class="field">
+      <span>Никнейм</span>
+      <input name="nickname" value="{{ user.nickname or '' }}" placeholder="@nickname">
+    </label>
+    <label class="field">
+      <span>Возраст</span>
+      <input name="age" value="{{ user.age or '' }}" placeholder="18" inputmode="numeric">
+    </label>
+    <label class="field">
+      <span>Образование</span>
+      <input name="education" value="{{ user.education or '' }}" placeholder="Учебное заведение">
+    </label>
+    <label class="field">
+      <span>Год выпуска</span>
+      <input name="graduation_year" value="{{ user.graduation_year or '' }}" placeholder="2025" inputmode="numeric">
+    </label>
+  </div>
+  <div class="file-row">
+    <label class="file-btn">
+      <span class="btn outline">Загрузить аватар</span>
+      <input type="file" name="avatar" accept="image/*">
+    </label>
+    <span class="muted">Форматы: png, jpg, jpeg, gif, webp</span>
+  </div>
+  <div class="form-actions">
+    <button class="btn strong" type="submit">Сохранить</button>
+    <button class="btn outline" type="submit" name="cancel" value="1">Отмена</button>
+  </div>
+</form>
+{% elif tab == 'course' %}
+<form class="card profile-form" method="post" enctype="multipart/form-data">
+  <input type="hidden" name="action" value="course">
+  <div class="course-preview">
+    {% if user.course_image %}
+      <div class="course-image" style="background-image:url('{{ user.course_image }}')"></div>
+    {% else %}
+      <div class="course-placeholder">Курса пока нет</div>
+    {% endif %}
+  </div>
+  <label class="file-btn">
+    <span class="btn outline">Загрузить изображение курса</span>
+    <input type="file" name="course_image" accept="image/*">
+  </label>
+  <div class="form-actions">
+    <button class="btn strong" type="submit">Сохранить</button>
+    <button class="btn outline" type="submit" name="cancel" value="1">Отмена</button>
+  </div>
+</form>
+{% else %}
+<section class="card profile-overview">
+  <h3>О себе</h3>
+  <p>Имя: <strong>{{ user.first_name or '—' }}</strong></p>
+  <p>Фамилия: <strong>{{ user.last_name or '—' }}</strong></p>
+  <p>Ник: <strong>@{{ user.nickname or '—' }}</strong></p>
+  <p>Возраст: <strong>{{ user.age or '—' }}</strong></p>
+  <p>Образование: <strong>{{ user.education or '—' }}</strong></p>
+  <p>Год выпуска: <strong>{{ user.graduation_year or '—' }}</strong></p>
+  <div class="course-preview">
+    <h3>Мой курс</h3>
+    {% if user.course_image %}
+      <div class="course-image" style="background-image:url('{{ user.course_image }}')"></div>
+    {% else %}
+      <div class="course-placeholder">Курса пока нет</div>
+    {% endif %}
+  </div>
+</section>
+{% endif %}
 {% endblock %}
