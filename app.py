@@ -4,7 +4,7 @@ from flask import Flask, render_template, request, redirect, url_for, flash, ses
 from flask_sqlalchemy import SQLAlchemy
 from passlib.hash import argon2
 from werkzeug.utils import secure_filename
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text  # SQLAlchemy 2.x: инспектор и text
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
@@ -19,6 +19,19 @@ db = SQLAlchemy()
 RU = {"login_title":"Вход","email":"Email","password":"Пароль","sign_in":"Войти","register":"Зарегистрироваться","feed":"Лента","search":"Поиск","chat":"Чат","notifications":"Уведомления","plan":"Мой план","profile_title":"Профиль","complete_profile":"Заполните профиль","close":"Закрыть","welcome_title":"Добро пожаловать!","tagline":"Найдите своего специалиста!","first_time":"Впервые у нас?","signup":"Зарегистрироваться","submit":"Далее","cancel":"Отмена","name_title":"Расскажите о себе","first_name":"Имя","last_name":"Фамилия","avatar_title":"Аватар","nickname_title":"Придумайте никнейм","suggestions":"Варианты никнейма","university":"ВУЗ"}
 EN = {"login_title":"Sign in","email":"Email","password":"Password","sign_in":"Sign in","register":"Register","feed":"Feed","search":"Search","chat":"Chat","notifications":"Notifications","plan":"My plan","profile_title":"Profile","complete_profile":"Complete your profile","close":"Close","welcome_title":"Welcome!","tagline":"Find your specialist!","first_time":"New here?","signup":"Sign up","submit":"Next","cancel":"Cancel","name_title":"Tell us about you","first_name":"First name","last_name":"Last name","avatar_title":"Avatar","nickname_title":"Choose a nickname","suggestions":"Suggestions","university":"University"}
 def tr(lang, key): return (RU if lang=="ru" else EN).get(key, key)
+
+# ---------- Глобальные утилиты ----------
+def avatar_url(user=None):
+    """Единая точка получения URL аватара (глобальная, доступна во всех view)."""
+    if not user:
+        return DEFAULT_AVATARS["student"]
+    if getattr(user, "avatar", None):
+        return user.avatar
+    return DEFAULT_AVATARS.get(getattr(user, "role", None) or "student", DEFAULT_AVATARS["student"])
+
+def current_user():
+    uid = session.get("user_id")
+    return User.query.get(uid) if uid else None
 
 def create_app():
     app = Flask(__name__, instance_relative_config=True, static_folder="static", template_folder="templates")
@@ -40,24 +53,17 @@ def create_app():
 
     db.init_app(app)
 
-    # Register hooks without decorators to keep linters happy
+    # Глобальные значения в g и контекст в шаблонах
     def _globals():
         g.lang = session.get("lang", "ru")
         g.theme = session.get("theme", "dark")
-    def avatar_url(user=None):
-        if not user:
-            return DEFAULT_AVATARS["student"]
-        if user.avatar:
-            return user.avatar
-        return DEFAULT_AVATARS.get(user.role or "student", DEFAULT_AVATARS["student"])
-
     def inject_i18n():
         return dict(
             t=lambda k: tr(g.lang, k),
             lang=g.lang,
             theme=g.theme,
             current_user=current_user,
-            avatar_url=avatar_url,
+            avatar_url=avatar_url,  # функцию тоже пробрасываем в шаблоны
         )
     app.before_request(_globals)
     app.context_processor(inject_i18n)
@@ -69,7 +75,7 @@ def create_app():
     register_routes(app)
     return app
 
-# Models
+# ---------- Модели ----------
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(255), unique=True, nullable=False)
@@ -84,10 +90,8 @@ class User(db.Model):
     graduation_year = db.Column(db.String(10))
     course_image = db.Column(db.String(255))
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
-    # one-to-one profiles
     student = db.relationship("StudentProfile", backref="user", uselist=False, cascade="all, delete-orphan")
     specialist = db.relationship("SpecialistProfile", backref="user", uselist=False, cascade="all, delete-orphan")
-    # posts relationship
     posts = db.relationship("Post", backref="user", lazy=True, cascade="all, delete-orphan")
 
 class StudentProfile(db.Model):
@@ -126,10 +130,7 @@ class Message(db.Model):
     text = db.Column(db.Text, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
 
-def current_user():
-    uid = session.get("user_id")
-    return User.query.get(uid) if uid else None
-
+# ---------- Хелперы ----------
 def login_required(f):
     from functools import wraps
     @wraps(f)
@@ -156,28 +157,34 @@ def ensure_bots():
             db.session.add(Post(user_id=u.id, title=title, summary=summary, image=img))
         db.session.commit()
 
-
 def ensure_schema():
     engine = db.engine
     inspector = inspect(engine)
     user_cols = {col["name"] for col in inspector.get_columns("user")}
     alters = []
+    # Экранируем имя таблицы "user" — кросс-СУБД безопаснее
     if "age" not in user_cols:
-        alters.append("ALTER TABLE user ADD COLUMN age INTEGER")
+        alters.append('ALTER TABLE "user" ADD COLUMN age INTEGER')
     if "education" not in user_cols:
-        alters.append("ALTER TABLE user ADD COLUMN education VARCHAR(255)")
+        alters.append('ALTER TABLE "user" ADD COLUMN education VARCHAR(255)')
     if "graduation_year" not in user_cols:
-        alters.append("ALTER TABLE user ADD COLUMN graduation_year VARCHAR(10)")
+        alters.append('ALTER TABLE "user" ADD COLUMN graduation_year VARCHAR(10)')
     if "course_image" not in user_cols:
-        alters.append("ALTER TABLE user ADD COLUMN course_image VARCHAR(255)")
+        alters.append('ALTER TABLE "user" ADD COLUMN course_image VARCHAR(255)')
+    if not alters:
+        return
+    # SQLAlchemy 2.x: сырые SQL через exec_driver_sql() или text(...)
     with engine.begin() as conn:
         for stmt in alters:
-            conn.execute(stmt)
+            conn.exec_driver_sql(stmt)
+            # альтернатива:
+            # conn.execute(text(stmt))
 
 def translit(s):
     table = {'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'e','ж':'zh','з':'z','и':'i','й':'y','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r','с':'s','т':'t','у':'u','ф':'f','х':'h','ц':'c','ч':'ch','ш':'sh','щ':'sch','ъ':'','ы':'y','ь':'','э':'e','ю':'yu','я':'ya'}
     return ''.join(table.get(ch, ch) for ch in (s or '').lower())
 
+# ---------- Роуты ----------
 def register_routes(app):
     @app.route("/set-theme/<theme>")
     def set_theme(theme):
@@ -292,6 +299,7 @@ def register_routes(app):
                     file.save(path); u.avatar = "/uploads/avatars/" + os.path.basename(path); db.session.commit()
             if "cancel" in request.form: return redirect(url_for("profile"))
             return redirect(url_for("onb_nick"))
+        # здесь нужно строковое значение URL для предпросмотра
         return render_template("onb_avatar.html", avatar_url=avatar_url(u))
 
     @app.route("/onboarding/nickname", methods=["GET","POST"])
@@ -322,9 +330,7 @@ def register_routes(app):
     def feed():
         message = "Совсем скоро будет доступно!"
         posts = []
-        # keep historical posts logic commented for future re-enable
-        # ensure_bots()
-        # posts = Post.query.order_by(Post.created_at.desc()).all()
+        # ensure_bots()  # оставлено закомментированным до включения ленты
         return render_template("feed.html", posts=posts, disabled_message=message)
 
     @app.route("/search")
@@ -391,9 +397,9 @@ def register_routes(app):
             flash("Нельзя писать самому себе.","error"); return redirect(url_for("chat_index"))
         c = ConvHelper.get_or_create(me, user_id)
         if request.method == "POST":
-            text = (request.form.get("text") or "").strip()
-            if text:
-                db.session.add(Message(conversation_id=c.id, sender_id=me, text=text)); db.session.commit()
+            text_ = (request.form.get("text") or "").strip()
+            if text_:
+                db.session.add(Message(conversation_id=c.id, sender_id=me, text=text_)); db.session.commit()
         msgs = Message.query.filter_by(conversation_id=c.id).order_by(Message.created_at.asc()).all()
         other_id = [m.user_id for m in ConversationMember.query.filter_by(conversation_id=c.id).all() if m.user_id!=me][0]
         other = User.query.get(other_id)
