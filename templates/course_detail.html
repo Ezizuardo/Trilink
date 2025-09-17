@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}{{ course.title }}{% endblock %}
+{% block content %}
+<h1><span class="icon icon-profile"></span>{{ course.title }}</h1>
+<section class="course-view">
+  <div class="course-player" data-player data-preview-src="{{ videos[0].file_url if videos else '' }}">
+    <div class="player-preview" data-player-preview data-preview-src="{{ videos[0].file_url if videos else '' }}" style="background-image:url('{{ course.preview_image or '/static/img/course_placeholder.svg' }}')">
+      <video muted playsinline preload="metadata"></video>
+      <button class="btn strong" type="button" data-start-preview>Посмотреть превью</button>
+    </div>
+    <video class="player-video" controls preload="metadata" playsinline data-quality-state="1080" {% if not videos %}style="display:none"{% endif %}>
+      {% if videos %}
+      <source src="{{ videos[0].file_url }}">
+      {% endif %}
+      Ваш браузер не поддерживает воспроизведение видео.
+    </video>
+    {% if not videos %}
+    <div class="muted small">Видео появятся, как только автор загрузит материалы.</div>
+    {% endif %}
+    {% if videos %}
+    <div class="player-controls">
+      <label>Качество
+        <select data-quality-select>
+          <option value="1080" selected>1080p</option>
+          <option value="720">720p</option>
+          <option value="480">480p</option>
+        </select>
+      </label>
+      <span class="player-price">{{ ("{:,.0f}".format(course.price).replace(',', ' ') + ' ₽') if course.price is not none else 'Бесплатно' }}</span>
+    </div>
+    {% else %}
+    <div class="player-controls">
+      <span class="player-price">{{ ("{:,.0f}".format(course.price).replace(',', ' ') + ' ₽') if course.price is not none else 'Бесплатно' }}</span>
+    </div>
+    {% endif %}
+  </div>
+  <aside class="course-sidebar">
+    <div class="course-summary card">
+      <div class="summary-header">
+        <div class="summary-cover" style="background-image:url('{{ course.preview_image or '/static/img/course_placeholder.svg' }}')"></div>
+        <div>
+          <h2>{{ course.title }}</h2>
+          <div class="summary-tags">
+            {% if course.subject %}<span class="chip">{{ course.subject }}</span>{% endif %}
+            {% if course.topic %}<span class="chip">{{ course.topic }}</span>{% endif %}
+            <span class="chip muted">{{ videos|length }} видео</span>
+          </div>
+          <p class="muted">{{ course.description or 'Автор пока не добавил описание.' }}</p>
+        </div>
+      </div>
+      <div class="summary-author">
+        <img src="{{ avatar_url(owner) }}" alt="{{ owner.nickname or owner.first_name }}" class="avatar-mini">
+        <div>
+          <div class="author-name">{{ owner.first_name or owner.nickname or owner.email }}</div>
+          <div class="muted">@{{ owner.nickname or 'без_ника' }}</div>
+          {% if owner.telegram_handle %}<div class="muted">Telegram: {{ owner.telegram_handle }}</div>{% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="playlist card" data-course-playlist>
+      <h2>Плейлист</h2>
+      <ol>
+        {% for video in videos %}
+        <li class="playlist-item{% if loop.first %} active{% endif %}" data-video-src="{{ video.file_url }}" data-index="{{ loop.index0 }}">
+          <div class="playlist-thumb" style="background-image:url('{{ course.preview_image or '/static/img/course_placeholder.svg' }}')">
+            <span class="playlist-number">{{ loop.index }}</span>
+            <video muted playsinline preload="metadata" data-preview-fragment="{{ video.file_url }}"></video>
+          </div>
+          <div class="playlist-body">
+            <div class="playlist-title">{{ video.title or 'Видео урок' }}</div>
+            <div class="playlist-meta">{{ ('%.2f' % (video.file_size_mb or 0))|replace('.', ',') }} МБ</div>
+          </div>
+        </li>
+        {% else %}
+        <li class="muted">Материалы ещё не загружены.</li>
+        {% endfor %}
+      </ol>
+    </div>
+  </aside>
+</section>
+{% endblock %}
