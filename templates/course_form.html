@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Мой курс{% endblock %}
+{% block content %}
+<h1><span class="icon icon-profile"></span>Управление курсом</h1>
+<form class="course-form-wrapper" method="post" enctype="multipart/form-data">
+  <section class="card course-form">
+    <div class="form-columns">
+      <label class="field">
+        <span>Заголовок курса</span>
+        <input name="title" value="{{ course.title if course else '' }}" placeholder="Например, React с нуля" required>
+      </label>
+      <label class="field">
+        <span>Предмет</span>
+        <input name="subject" value="{{ course.subject if course else '' }}" placeholder="Frontend, математика, дизайн">
+      </label>
+      <label class="field">
+        <span>Тема (можно пропустить)</span>
+        <input name="topic" value="{{ course.topic if course else '' }}" placeholder="Работа с компонентами">
+      </label>
+      <label class="field">
+        <span>Стоимость интенсива, ₽</span>
+        <input name="price" value="{{ course.price if course and course.price is not none else '' }}" inputmode="numeric" placeholder="1500">
+      </label>
+    </div>
+    <label class="field">
+      <span>Описание курса</span>
+      <textarea name="description" rows="4" placeholder="Коротко расскажите, что будет на курсе.">{{ course.description if course else '' }}</textarea>
+    </label>
+    <div class="preview-upload" data-preview>
+      <div class="preview-image" style="background-image:url('{{ (course.preview_image if course else None) or '/static/img/course_placeholder.svg' }}')"></div>
+      <div class="preview-meta">
+        <strong>Превью курса</strong>
+        <p class="muted">Это изображение увидят ученики в поиске и в плейлистах.</p>
+        <label class="file-btn">
+          <span class="btn outline">Загрузить изображение</span>
+          <input type="file" name="preview_image" accept="image/*" data-preview-input>
+        </label>
+        <span class="muted small">Допустимые форматы: png, jpg, jpeg, gif, webp</span>
+      </div>
+    </div>
+    <div class="video-upload">
+      <label class="field">
+        <span>Добавить видео материалы</span>
+        <input id="courseVideos" type="file" name="videos" accept="video/*" multiple>
+      </label>
+      <p class="muted small">Если файл тяжелее {{ max_video_size }} МБ, разделите его на несколько частей и загрузите по отдельности.</p>
+    </div>
+    <div class="playlist-editor" data-playlist>
+      <div class="playlist-header">
+        <h2>Плейлист курса</h2>
+        <span class="muted">Перетащите или используйте стрелки, чтобы изменить порядок.</span>
+      </div>
+      <input type="hidden" name="video_order" id="videoOrder" value="">
+      <div class="playlist-items" data-playlist-items>
+        {% for video in videos %}
+        <div class="playlist-row" data-video-id="{{ video.id }}">
+          <button class="drag-handle" type="button" title="Переместить">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4h4v2h-4V4Zm0 7h4v2h-4v-2Zm4 9h-4v-2h4v2Z"/></svg>
+          </button>
+          <div class="playlist-cover" style="background-image:url('{{ (course.preview_image if course else None) or '/static/img/course_placeholder.svg' }}')"></div>
+          <div class="playlist-info">
+            <div class="playlist-title">{{ video.title or 'Видео урок' }}</div>
+            <div class="playlist-meta">{{ ('%.2f' % (video.file_size_mb or 0))|replace('.', ',') }} МБ</div>
+          </div>
+          <div class="playlist-actions">
+            <button class="btn ghost" type="button" data-move="up" title="Выше">▲</button>
+            <button class="btn ghost" type="button" data-move="down" title="Ниже">▼</button>
+            <form method="post" action="{{ url_for('delete_course_video', course_id=course.id, video_id=video.id) }}" onsubmit="return confirm('Удалить это видео?');">
+              <button class="btn danger ghost" type="submit">Удалить</button>
+            </form>
+          </div>
+        </div>
+        {% else %}
+        <div class="playlist-empty muted">Пока нет видео. Загрузите файлы, чтобы собрать плейлист.</div>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn strong" type="submit">Сохранить курс</button>
+      <a class="btn outline" href="{{ url_for('profile', tab='course') }}">Отмена</a>
+    </div>
+  </section>
+</form>
+{% endblock %}

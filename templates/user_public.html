@@ -13,11 +13,45 @@
     <p>Возраст: {{ person.age or '—' }}</p>
     <p>Образование: {{ person.education or '—' }}</p>
     <p>Год выпуска: {{ person.graduation_year or '—' }}</p>
+    {% if person.telegram_handle %}<p>Telegram: {{ person.telegram_handle }}</p>{% endif %}
   </div>
   <div class="card public-right">
     <h2>Мой курс</h2>
-    {% if person.course_image %}
-      <div class="course-image" style="background-image:url('{{ person.course_image }}')"></div>
+    {% if course %}
+      <div class="public-course">
+        <div class="public-course-preview" data-preview-card data-preview-src="{{ videos[0].file_url if videos else '' }}" style="background-image:url('{{ course.preview_image or '/static/img/course_placeholder.svg' }}')">
+          {% if course.price is not none %}<span class="price-bubble">{{ "{:,.0f}".format(course.price).replace(',', ' ') }} ₽</span>{% endif %}
+          <video muted playsinline preload="metadata"></video>
+        </div>
+        <div class="public-course-body">
+          <div class="public-course-top">
+            <h3>{{ course.title }}</h3>
+            <div class="chip-row">
+              {% if course.subject %}<span class="chip">{{ course.subject }}</span>{% endif %}
+              {% if course.topic %}<span class="chip">{{ course.topic }}</span>{% endif %}
+              <span class="chip muted">{{ videos|length }} видео</span>
+            </div>
+          </div>
+          <p class="muted">{{ course.description or 'Автор пока не добавил описание.' }}</p>
+          <a class="btn strong" href="{{ url_for('course_detail', course_id=course.id) }}">Перейти к интенсиву</a>
+        </div>
+      </div>
+      <div class="public-playlist">
+        <h4>Содержание</h4>
+        <ol>
+          {% for video in videos %}
+          <li>
+            <span class="mini-number">{{ loop.index }}</span>
+            <div class="mini-body">
+              <div class="mini-title">{{ video.title or 'Видео урок' }}</div>
+              <div class="mini-meta">{{ ('%.2f' % (video.file_size_mb or 0))|replace('.', ',') }} МБ</div>
+            </div>
+          </li>
+          {% else %}
+          <li class="muted">Видео ещё не добавлены.</li>
+          {% endfor %}
+        </ol>
+      </div>
     {% else %}
       <div class="course-placeholder">Курса пока нет</div>
     {% endif %}

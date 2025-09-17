@@ -13,6 +13,8 @@ DEFAULT_AVATARS = {
     "specialist": "/static/img/lion_teacher.svg",
 }
 ALLOWED_IMG = {"png","jpg","jpeg","gif","webp"}
+ALLOWED_VIDEO = {"mp4", "mov", "mkv", "webm", "avi", "m4v"}
+MAX_VIDEO_SIZE_MB = 200
 
 db = SQLAlchemy()
 
@@ -37,6 +39,8 @@ def create_app():
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
     os.makedirs(os.path.join(UPLOAD_FOLDER,"avatars"), exist_ok=True)
     os.makedirs(os.path.join(UPLOAD_FOLDER,"courses"), exist_ok=True)
+    os.makedirs(os.path.join(UPLOAD_FOLDER,"courses","previews"), exist_ok=True)
+    os.makedirs(os.path.join(UPLOAD_FOLDER,"courses","videos"), exist_ok=True)
 
     db.init_app(app)
 
@@ -83,12 +87,48 @@ class User(db.Model):
     education = db.Column(db.String(255))
     graduation_year = db.Column(db.String(10))
     course_image = db.Column(db.String(255))
+    telegram_handle = db.Column(db.String(120))
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
     # one-to-one profiles
     student = db.relationship("StudentProfile", backref="user", uselist=False, cascade="all, delete-orphan")
     specialist = db.relationship("SpecialistProfile", backref="user", uselist=False, cascade="all, delete-orphan")
     # posts relationship
     posts = db.relationship("Post", backref="user", lazy=True, cascade="all, delete-orphan")
+    courses = db.relationship(
+        "Course",
+        backref="user",
+        lazy=True,
+        cascade="all, delete-orphan",
+        order_by="Course.created_at.desc()",
+    )
+
+
+class Course(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    title = db.Column(db.String(255), nullable=False)
+    subject = db.Column(db.String(255))
+    topic = db.Column(db.String(255))
+    description = db.Column(db.Text)
+    preview_image = db.Column(db.String(255))
+    price = db.Column(db.Integer)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    videos = db.relationship(
+        "CourseVideo",
+        backref="course",
+        cascade="all, delete-orphan",
+        order_by="CourseVideo.order_index.asc()",
+    )
+
+
+class CourseVideo(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    course_id = db.Column(db.Integer, db.ForeignKey("course.id"), nullable=False)
+    title = db.Column(db.String(255))
+    file_url = db.Column(db.String(255), nullable=False)
+    file_size_mb = db.Column(db.Float)
+    order_index = db.Column(db.Integer, default=0)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
 
 class StudentProfile(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -170,6 +210,8 @@ def ensure_schema():
         alters.append("ALTER TABLE user ADD COLUMN graduation_year VARCHAR(10)")
     if "course_image" not in user_cols:
         alters.append("ALTER TABLE user ADD COLUMN course_image VARCHAR(255)")
+    if "telegram_handle" not in user_cols:
+        alters.append("ALTER TABLE user ADD COLUMN telegram_handle VARCHAR(120)")
     with engine.begin() as conn:
         for stmt in alters:
             conn.execute(stmt)
@@ -177,6 +219,48 @@ def ensure_schema():
 def translit(s):
     table = {'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'e','ж':'zh','з':'z','и':'i','й':'y','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r','с':'s','т':'t','у':'u','ф':'f','х':'h','ц':'c','ч':'ch','ш':'sh','щ':'sch','ъ':'','ы':'y','ь':'','э':'e','ю':'yu','я':'ya'}
     return ''.join(table.get(ch, ch) for ch in (s or '').lower())
+
+def _timestamped_name(prefix, ext):
+    stamp = datetime.datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
+    return secure_filename(f"{prefix}_{stamp}.{ext}")
+
+def save_course_preview(file, user_id):
+    if not file or not file.filename:
+        return None, "Файл изображения не найден."
+    ext = file.filename.rsplit(".", 1)[-1].lower()
+    if ext not in ALLOWED_IMG:
+        return None, "Неподдерживаемый формат изображения."
+    filename = _timestamped_name(f"user{user_id}_course", ext)
+    path = os.path.join(UPLOAD_FOLDER, "courses", "previews", filename)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    file.save(path)
+    return f"/uploads/courses/previews/{filename}", None
+
+def save_course_video(file, user_id):
+    if not file or not file.filename:
+        return None, None, "Файл видео не найден."
+    ext = file.filename.rsplit(".", 1)[-1].lower()
+    if ext not in ALLOWED_VIDEO:
+        return None, None, "Неподдерживаемый формат видео."
+    safe_base = secure_filename(os.path.splitext(file.filename)[0]) or "video"
+    filename = _timestamped_name(safe_base, ext)
+    folder = os.path.join(UPLOAD_FOLDER, "courses", "videos", f"user{user_id}")
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, filename)
+    file.save(path)
+    size_mb = os.path.getsize(path) / (1024 * 1024)
+    if size_mb > MAX_VIDEO_SIZE_MB:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        return None, None, f"Видео {file.filename} превышает {MAX_VIDEO_SIZE_MB} МБ. Разделите его на части и загрузите по отдельности."
+    return f"/uploads/courses/videos/user{user_id}/{filename}", round(size_mb, 2), None
+
+def pretty_title_from_filename(filename):
+    base = os.path.splitext(filename)[0]
+    clean = base.replace('_', ' ').replace('-', ' ').strip()
+    return clean.capitalize() if clean else "Видео урок"
 
 def register_routes(app):
     @app.route("/set-theme/<theme>")
@@ -336,6 +420,9 @@ def register_routes(app):
         people = User.query.order_by(User.created_at.desc()).all()
         if q_clean:
             def match(p):
+                course_bits = []
+                for c in getattr(p, "courses", []) or []:
+                    course_bits.extend(filter(None, [c.title, c.subject, c.topic, c.description]))
                 hay = " ".join(filter(None, [
                     p.first_name or "",
                     p.last_name or "",
@@ -343,6 +430,7 @@ def register_routes(app):
                     p.role or "",
                     (p.specialist.keywords if p.specialist else ""),
                     (p.student.looking_for if p.student else ""),
+                    " ".join(course_bits),
                 ])).lower()
                 return q_clean in hay
             people = list(filter(match, people))
@@ -356,7 +444,16 @@ def register_routes(app):
     @login_required
     def public_profile(user_id):
         person = User.query.get_or_404(user_id)
-        return render_template("user_public.html", person=person, avatar=avatar_url(person))
+        course = Course.query.filter_by(user_id=person.id).first()
+        videos = CourseVideo.query.filter_by(course_id=course.id).order_by(CourseVideo.order_index.asc()).all() if course else []
+        return render_template(
+            "user_public.html",
+            person=person,
+            avatar=avatar_url(person),
+            course=course,
+            videos=videos,
+            is_owner=(session.get("user_id") == person.id),
+        )
 
     class ConvHelper:
         @staticmethod
@@ -406,6 +503,7 @@ def register_routes(app):
         tab = request.args.get("tab") or request.form.get("tab") or "summary"
         if tab not in ("summary","about","course"):
             tab = "summary"
+        course = u.courses[0] if u.courses else None
         if request.method == "POST":
             action = request.form.get("action")
             if action == "about":
@@ -432,6 +530,16 @@ def register_routes(app):
                     flash("Год выпуска должен состоять из цифр.","error")
                     return redirect(url_for("profile", tab="about"))
                 u.graduation_year = grad or None
+                telegram = request.form.get("telegram_handle","").strip()
+                if not telegram:
+                    flash("Укажите ник в Telegram.","error")
+                    return redirect(url_for("profile", tab="about"))
+                if not telegram.startswith("@"):
+                    telegram = "@" + telegram.lstrip("@")
+                if len(telegram) > 120:
+                    flash("Ник в Telegram слишком длинный.","error")
+                    return redirect(url_for("profile", tab="about"))
+                u.telegram_handle = telegram
                 file = request.files.get("avatar")
                 if file and file.filename:
                     ext = file.filename.rsplit(".",1)[-1].lower()
@@ -446,24 +554,134 @@ def register_routes(app):
                 db.session.commit()
                 flash("Профиль обновлён.","ok")
                 return redirect(url_for("profile"))
-            if action == "course":
-                if "cancel" in request.form:
-                    return redirect(url_for("profile"))
-                cover = request.files.get("course_image")
-                if cover and cover.filename:
-                    ext = cover.filename.rsplit(".",1)[-1].lower()
-                    if ext in ALLOWED_IMG:
-                        path = os.path.join(UPLOAD_FOLDER, "courses", secure_filename(f"user{u.id}_course.{ext}"))
-                        os.makedirs(os.path.dirname(path), exist_ok=True)
-                        cover.save(path)
-                        u.course_image = "/uploads/courses/" + os.path.basename(path)
-                    else:
-                        flash("Неподдерживаемый формат файла.","error")
-                        return redirect(url_for("profile", tab="course"))
-                db.session.commit()
-                flash("Изображение курса обновлено.","ok")
+        course_videos = []
+        if course:
+            course_videos = CourseVideo.query.filter_by(course_id=course.id).order_by(CourseVideo.order_index.asc()).all()
+        return render_template("profile.html", user=u, tab=tab, avatar=avatar_url(u), course=course, course_videos=course_videos)
+
+    @app.route("/courses/new", methods=["GET","POST"])
+    @login_required
+    def course_new():
+        u = current_user()
+        if u.role != "specialist":
+            flash("Добавлять курсы могут только специалисты.", "error")
+            return redirect(url_for("profile", tab="course"))
+        course = Course.query.filter_by(user_id=u.id).first()
+        if request.method == "POST":
+            if "cancel" in request.form:
                 return redirect(url_for("profile", tab="course"))
-        return render_template("profile.html", user=u, tab=tab, avatar=avatar_url(u))
+            title = (request.form.get("title") or "").strip()
+            subject = (request.form.get("subject") or "").strip()
+            topic = (request.form.get("topic") or "").strip()
+            description = (request.form.get("description") or "").strip()
+            price_raw = (request.form.get("price") or "").strip()
+            errors = []
+            if not title:
+                errors.append("Укажите заголовок курса.")
+            price_val = None
+            if price_raw:
+                try:
+                    price_val = int(price_raw)
+                    if price_val < 0:
+                        raise ValueError
+                except ValueError:
+                    errors.append("Введите корректную цену в рублях.")
+            preview_file = request.files.get("preview_image")
+            preview_url = course.preview_image if course else None
+            if preview_file and preview_file.filename:
+                preview_url, error = save_course_preview(preview_file, u.id)
+                if error:
+                    errors.append(error)
+            elif not preview_url:
+                errors.append("Добавьте изображение для превью курса.")
+            if errors:
+                for msg in errors:
+                    flash(msg, "error")
+                videos = CourseVideo.query.filter_by(course_id=course.id).order_by(CourseVideo.order_index.asc()).all() if course else []
+                return render_template("course_form.html", user=u, course=course, videos=videos, max_video_size=MAX_VIDEO_SIZE_MB)
+            if not course:
+                course = Course(user_id=u.id)
+                db.session.add(course)
+            course.title = title
+            course.subject = subject or None
+            course.topic = topic or None
+            course.description = description or None
+            course.price = price_val
+            if preview_url:
+                course.preview_image = preview_url
+                u.course_image = preview_url
+            db.session.flush()
+            video_files = request.files.getlist("videos")
+            existing_videos = CourseVideo.query.filter_by(course_id=course.id).order_by(CourseVideo.order_index.asc()).all()
+            next_order = existing_videos[-1].order_index + 1 if existing_videos else 0
+            added_any = False
+            for file in video_files:
+                if not file or not file.filename:
+                    continue
+                video_url, size_mb, error = save_course_video(file, u.id)
+                if error:
+                    flash(error, "error")
+                    continue
+                title_guess = pretty_title_from_filename(file.filename)
+                cv = CourseVideo(course_id=course.id, title=title_guess, file_url=video_url, file_size_mb=size_mb, order_index=next_order)
+                next_order += 1
+                db.session.add(cv)
+                added_any = True
+            db.session.flush()
+            order_raw = (request.form.get("video_order") or "").strip()
+            if order_raw:
+                order_ids = []
+                for piece in order_raw.split(","):
+                    piece = piece.strip()
+                    if piece.isdigit():
+                        order_ids.append(int(piece))
+                if order_ids:
+                    by_id = {v.id: v for v in CourseVideo.query.filter_by(course_id=course.id).all()}
+                    for idx, vid in enumerate(order_ids):
+                        if vid in by_id:
+                            by_id[vid].order_index = idx
+                    tail_start = len(order_ids)
+                    for vid in by_id.values():
+                        if vid.id not in order_ids:
+                            vid.order_index = tail_start
+                            tail_start += 1
+            if added_any:
+                flash("Видео добавлены в плейлист.", "ok")
+            db.session.commit()
+            flash("Курс сохранён.", "ok")
+            return redirect(url_for("profile", tab="course"))
+        videos = CourseVideo.query.filter_by(course_id=course.id).order_by(CourseVideo.order_index.asc()).all() if course else []
+        return render_template("course_form.html", user=u, course=course, videos=videos, max_video_size=MAX_VIDEO_SIZE_MB)
+
+    @app.post("/courses/<int:course_id>/videos/<int:video_id>/delete")
+    @login_required
+    def delete_course_video(course_id, video_id):
+        u = current_user()
+        course = Course.query.get_or_404(course_id)
+        if course.user_id != u.id:
+            flash("Нет доступа к этому курсу.", "error")
+            return redirect(url_for("profile", tab="course"))
+        video = CourseVideo.query.filter_by(course_id=course.id, id=video_id).first_or_404()
+        file_path = os.path.join(BASE_DIR, video.file_url.lstrip("/"))
+        try:
+            os.remove(file_path)
+        except OSError:
+            pass
+        db.session.delete(video)
+        remaining = CourseVideo.query.filter_by(course_id=course.id).order_by(CourseVideo.order_index.asc()).all()
+        for idx, item in enumerate(remaining):
+            item.order_index = idx
+        db.session.commit()
+        flash("Видео удалено из плейлиста.", "ok")
+        return redirect(url_for("course_new"))
+
+    @app.route("/courses/<int:course_id>")
+    @login_required
+    def course_detail(course_id):
+        course = Course.query.get_or_404(course_id)
+        videos = CourseVideo.query.filter_by(course_id=course.id).order_by(CourseVideo.order_index.asc()).all()
+        owner = course.user
+        return render_template("course_detail.html", course=course, owner=owner, videos=videos)
 
     @app.route("/uploads/<path:filename>")
     def uploaded(filename):
