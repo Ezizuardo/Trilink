@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-import os, datetime, random
-from flask import Flask, render_template, request, redirect, url_for, flash, session, send_from_directory, g
+import os, datetime, random, mimetypes, re
+from flask import Flask, render_template, request, redirect, url_for, flash, session, send_from_directory, g, abort, Response, send_file
 from flask_sqlalchemy import SQLAlchemy
 from passlib.hash import argon2
 from werkzeug.utils import secure_filename
@@ -10,6 +10,8 @@ from sqlalchemy import inspect, text  # SQLAlchemy 2.x: инспектор и te
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
+STATIC_FOLDER = os.path.join(BASE_DIR, "static")
+DECOY_DOWNLOAD = os.path.join(STATIC_FOLDER, "img", "no-download.svg")
 DEFAULT_AVATARS = {
     "student": "/static/img/lion_student.svg",
     "specialist": "/static/img/lion_teacher.svg",
@@ -67,6 +69,49 @@ def format_price(amount):
 def current_user():
     uid = session.get("user_id")
     return User.query.get(uid) if uid else None
+
+
+def absolute_upload_path(rel_url):
+    if not rel_url:
+        return None
+    safe = rel_url.lstrip("/")
+    return os.path.join(BASE_DIR, safe)
+
+
+def send_decoy_image(download=False):
+    if os.path.exists(DECOY_DOWNLOAD):
+        opts = dict(
+            mimetype=mimetypes.guess_type(DECOY_DOWNLOAD)[0] or "image/jpeg",
+            as_attachment=download,
+        )
+        if download:
+            opts["download_name"] = "access-denied.jpg"
+        return send_file(DECOY_DOWNLOAD, **opts)
+    abort(404)
+
+
+def stream_video_file(path, mimetype):
+    range_header = request.headers.get("Range", None)
+    if range_header:
+        match = re.match(r"bytes=(\d+)-(\d*)", range_header)
+        size = os.path.getsize(path)
+        if match:
+            start = int(match.group(1))
+            end = match.group(2)
+            end = int(end) if end else size - 1
+            end = min(end, size - 1)
+            length = end - start + 1
+            with open(path, "rb") as fh:
+                fh.seek(start)
+                data = fh.read(length)
+            rv = Response(data, 206, mimetype=mimetype, direct_passthrough=True)
+            rv.headers.add("Content-Range", f"bytes {start}-{end}/{size}")
+            rv.headers.add("Accept-Ranges", "bytes")
+            rv.headers.add("Content-Length", str(length))
+            return rv
+    rv = send_file(path, mimetype=mimetype, conditional=True)
+    rv.headers.add("Accept-Ranges", "bytes")
+    return rv
 
 def create_app():
     app = Flask(__name__, instance_relative_config=True, static_folder="static", template_folder="templates")
@@ -416,7 +461,15 @@ def register_routes(app):
                 ])).lower()
                 return q_clean in hay
             people = list(filter(match, people))
-        return render_template("search.html", people=people, q=q)
+        results = []
+        for person in people:
+            person_courses = sorted(person.courses, key=lambda c: c.created_at or datetime.datetime.utcnow(), reverse=True)
+            if person_courses:
+                for course in person_courses:
+                    results.append({"person": person, "course": course})
+            else:
+                results.append({"person": person, "course": None})
+        return render_template("search.html", results=results, q=q)
 
     @app.route("/support")
     def support_redirect():
@@ -443,7 +496,8 @@ def register_routes(app):
                 for v in vids:
                     sources.append({
                         "quality": v.quality_label or "Оригинал",
-                        "src": v.file_path,
+                        "src": url_for("course_video_stream", course_id=course.id, video_id=v.id),
+                        "download": url_for("course_video_stream", course_id=course.id, video_id=v.id, download=1),
                     })
                 lessons.append({
                     "order": idx,
@@ -455,7 +509,23 @@ def register_routes(app):
                 "lessons": lessons,
                 "video_total": len(ordered_videos),
             })
-        return render_template("user_public.html", person=person, avatar=avatar_url(person), courses=courses_payload)
+        selected_id = request.args.get("course_id", type=int)
+        selected_course = None
+        for payload in courses_payload:
+            if selected_id and payload["course"].id == selected_id:
+                selected_course = payload
+                break
+        if not selected_course and courses_payload:
+            selected_course = courses_payload[0]
+        other_courses = [payload for payload in courses_payload if not selected_course or payload["course"].id != selected_course["course"].id]
+        return render_template(
+            "user_public.html",
+            person=person,
+            avatar=avatar_url(person),
+            courses=courses_payload,
+            selected_course=selected_course,
+            other_courses=other_courses,
+        )
 
     @app.route("/courses/new", methods=["GET","POST"])
     @login_required
@@ -470,7 +540,9 @@ def register_routes(app):
             "topic": "",
             "description": "",
             "price": "",
-            "video_meta": [{"title": "", "quality": "Оригинал"}],
+            "video_meta": [{"title": "", "quality": ""}],
+            "is_edit": False,
+            "existing_videos": [],
         }
         if request.method == "POST":
             form["title"] = (request.form.get("title") or "").strip()
@@ -481,11 +553,13 @@ def register_routes(app):
             video_titles = [t.strip() for t in request.form.getlist("video_title[]")]
             video_qualities = [q.strip() for q in request.form.getlist("video_quality[]")]
             meta = []
-            for idx in range(max(len(video_titles), 1)):
+            file_count = len(request.files.getlist("video_file[]"))
+            max_len = max(len(video_titles), len(video_qualities), file_count, 1)
+            for idx in range(max_len):
                 title = video_titles[idx] if idx < len(video_titles) else ""
-                quality = video_qualities[idx] if idx < len(video_qualities) else "Оригинал"
-                meta.append({"title": title, "quality": quality or "Оригинал"})
-            form["video_meta"] = meta or [{"title": "", "quality": "Оригинал"}]
+                quality = video_qualities[idx] if idx < len(video_qualities) else ""
+                meta.append({"title": title, "quality": quality})
+            form["video_meta"] = meta or [{"title": "", "quality": ""}]
             errors = []
             if not form["title"]:
                 errors.append("Укажите заголовок курса.")
@@ -502,7 +576,6 @@ def register_routes(app):
             cover = request.files.get("cover_image")
             if not cover or not cover.filename:
                 errors.append("Загрузите изображение интенсива.")
-            preview_clip = request.files.get("preview_clip")
             video_files = request.files.getlist("video_file[]")
             prepared_videos = []
             for idx, meta_info in enumerate(form["video_meta"]):
@@ -522,10 +595,6 @@ def register_routes(app):
                     })
             if not prepared_videos:
                 errors.append("Добавьте хотя бы одно видео.")
-            if preview_clip and preview_clip.filename:
-                preview_ext = preview_clip.filename.rsplit(".", 1)[-1].lower()
-                if preview_ext not in ALLOWED_VIDEO:
-                    errors.append("Формат файла превью не поддерживается.")
             if cover and cover.filename:
                 cover_ext = cover.filename.rsplit(".", 1)[-1].lower()
                 if cover_ext not in ALLOWED_IMG:
@@ -551,12 +620,6 @@ def register_routes(app):
             cover_path = os.path.join(course_dir, cover_filename)
             cover.save(cover_path)
             course.cover_image = "/".join(["", "uploads", "courses", f"user{u.id}", f"course{course.id}", cover_filename])
-            if preview_clip and preview_clip.filename:
-                preview_ext = preview_clip.filename.rsplit(".", 1)[-1].lower()
-                preview_filename = secure_filename(f"preview.{preview_ext}")
-                preview_path = os.path.join(course_dir, preview_filename)
-                preview_clip.save(preview_path)
-                course.preview_clip = "/".join(["", "uploads", "courses", f"user{u.id}", f"course{course.id}", preview_filename])
             videos_dir = os.path.join(course_dir, "videos")
             os.makedirs(videos_dir, exist_ok=True)
             for order, video in enumerate(prepared_videos):
@@ -575,6 +638,206 @@ def register_routes(app):
             flash("Курс опубликован!", "ok")
             return redirect(url_for("profile", tab="course"))
         return render_template("course_form.html", form=form)
+
+    @app.route("/courses/<int:course_id>/edit", methods=["GET", "POST"])
+    @login_required
+    def course_edit(course_id):
+        u = current_user()
+        course = Course.query.get_or_404(course_id)
+        if course.user_id != u.id:
+            flash("Можно редактировать только свои интенсивы.", "error")
+            return redirect(url_for("profile", tab="course"))
+        ordered_videos = sorted(course.videos, key=lambda v: (v.order_index or 0, v.id))
+        form = {
+            "title": course.title or "",
+            "subject": course.subject or "",
+            "topic": course.topic or "",
+            "description": course.description or "",
+            "price": str(course.price or ""),
+            "video_meta": [],
+            "is_edit": True,
+            "cover_preview": course.cover_image,
+            "existing_videos": [
+                {
+                    "id": video.id,
+                    "title": video.title or "",
+                    "quality": video.quality_label or "Оригинал",
+                    "order": video.order_index if video.order_index is not None else idx,
+                }
+                for idx, video in enumerate(ordered_videos)
+            ],
+        }
+        if request.method == "POST":
+            form["title"] = (request.form.get("title") or "").strip()
+            form["subject"] = (request.form.get("subject") or "").strip()
+            form["topic"] = (request.form.get("topic") or "").strip()
+            form["description"] = (request.form.get("description") or "").strip()
+            form["price"] = (request.form.get("price") or "").strip()
+            price_value = None
+            errors = []
+            if not form["title"]:
+                errors.append("Укажите заголовок курса.")
+            if form["price"]:
+                try:
+                    price_value = int(round(float(form["price"].replace(",", "."))))
+                    if price_value < 0:
+                        raise ValueError
+                except ValueError:
+                    errors.append("Цена должна быть числом.")
+            else:
+                errors.append("Укажите цену интенсива.")
+
+            remove_ids = set()
+            for val in request.form.getlist("remove_video_ids[]"):
+                try:
+                    remove_ids.add(int(val))
+                except (TypeError, ValueError):
+                    continue
+
+            updated_existing = []
+            for idx, video in enumerate(ordered_videos):
+                title_val = (request.form.get(f"existing_title_{video.id}") or "").strip()
+                quality_val = (request.form.get(f"existing_quality_{video.id}") or "").strip()
+                order_raw = (request.form.get(f"existing_order_{video.id}") or "").strip()
+                form_entry = {
+                    "id": video.id,
+                    "title": title_val,
+                    "quality": quality_val,
+                    "order": order_raw,
+                    "marked": video.id in remove_ids,
+                }
+                form["existing_videos"][idx] = form_entry
+                try:
+                    order_val = int(order_raw)
+                except (TypeError, ValueError):
+                    order_val = idx
+                updated_existing.append({
+                    "video": video,
+                    "title": title_val or video.title or f"Урок {idx+1}",
+                    "quality": quality_val or video.quality_label or "Оригинал",
+                    "order": order_val,
+                    "remove": video.id in remove_ids,
+                })
+
+            video_titles = [t.strip() for t in request.form.getlist("video_title[]")]
+            video_qualities = [q.strip() for q in request.form.getlist("video_quality[]")]
+            video_files = request.files.getlist("video_file[]")
+            meta = []
+            max_len = max(len(video_titles), len(video_qualities), len(video_files))
+            for idx in range(max_len):
+                title = video_titles[idx] if idx < len(video_titles) else ""
+                quality = video_qualities[idx] if idx < len(video_qualities) else ""
+                if title or quality or idx < len(video_titles):
+                    meta.append({"title": title, "quality": quality})
+            form["video_meta"] = meta
+
+            prepared_videos = []
+            for idx, meta_info in enumerate(meta):
+                file = video_files[idx] if idx < len(video_files) else None
+                if file and file.filename:
+                    ext = file.filename.rsplit(".", 1)[-1].lower()
+                    if ext not in ALLOWED_VIDEO:
+                        errors.append(f"Формат видео {file.filename} не поддерживается.")
+                        continue
+                    title = meta_info.get("title") or f"Новый урок {idx+1}"
+                    quality = meta_info.get("quality") or "Оригинал"
+                    prepared_videos.append({
+                        "file": file,
+                        "title": title,
+                        "quality": quality,
+                        "ext": ext,
+                    })
+                elif meta_info.get("title") or meta_info.get("quality"):
+                    errors.append("Загрузите файл для нового видео.")
+
+            keep_existing = [item for item in updated_existing if not item["remove"]]
+            if not keep_existing and not prepared_videos:
+                errors.append("Добавьте хотя бы одно видео.")
+
+            cover = request.files.get("cover_image")
+            if cover and cover.filename:
+                cover_ext = cover.filename.rsplit(".", 1)[-1].lower()
+                if cover_ext not in ALLOWED_IMG:
+                    errors.append("Формат изображения не поддерживается.")
+
+            if errors:
+                for err in errors:
+                    flash(err, "error")
+                if not form["video_meta"]:
+                    form["video_meta"] = [{"title": "", "quality": ""}]
+                return render_template("course_form.html", form=form, course=course)
+
+            # Ensure base directories exist
+            course_dir = os.path.join(UPLOAD_FOLDER, "courses", f"user{u.id}", f"course{course.id}")
+            os.makedirs(course_dir, exist_ok=True)
+
+            # Update core fields
+            course.title = form["title"]
+            course.subject = form["subject"] or None
+            course.topic = form["topic"] or None
+            course.description = form["description"] or None
+            course.price = price_value
+
+            # Handle cover replacement
+            if cover and cover.filename:
+                cover_ext = cover.filename.rsplit(".", 1)[-1].lower()
+                cover_filename = secure_filename(f"cover.{cover_ext}")
+                cover_path = os.path.join(course_dir, cover_filename)
+                cover.save(cover_path)
+                if course.cover_image:
+                    old_path = os.path.join(BASE_DIR, course.cover_image.lstrip("/"))
+                    if os.path.exists(old_path) and old_path != cover_path:
+                        try:
+                            os.remove(old_path)
+                        except OSError:
+                            pass
+                course.cover_image = "/".join(["", "uploads", "courses", f"user{u.id}", f"course{course.id}", cover_filename])
+                form["cover_preview"] = course.cover_image
+
+            # Remove videos marked for deletion
+            for item in updated_existing:
+                if item["remove"]:
+                    video = item["video"]
+                    video_path = os.path.join(BASE_DIR, video.file_path.lstrip("/")) if video.file_path else None
+                    db.session.delete(video)
+                    if video_path and os.path.exists(video_path):
+                        try:
+                            os.remove(video_path)
+                        except OSError:
+                            pass
+
+            # Apply updates to remaining videos and normalize order
+            keep_existing = [item for item in updated_existing if not item["remove"]]
+            keep_existing.sort(key=lambda x: x["order"])
+            for idx, item in enumerate(keep_existing):
+                video = item["video"]
+                video.title = item["title"]
+                video.quality_label = item["quality"] or "Оригинал"
+                video.order_index = idx
+
+            videos_dir = os.path.join(course_dir, "videos")
+            os.makedirs(videos_dir, exist_ok=True)
+            offset = len(keep_existing)
+            for order, video in enumerate(prepared_videos, start=offset):
+                filename = secure_filename(f"video{order+1}_{datetime.datetime.utcnow().timestamp():.0f}.{video['ext']}")
+                file_path = os.path.join(videos_dir, filename)
+                video["file"].save(file_path)
+                rel_path = "/".join(["", "uploads", "courses", f"user{u.id}", f"course{course.id}", "videos", filename])
+                db.session.add(CourseVideo(
+                    course_id=course.id,
+                    title=video["title"],
+                    file_path=rel_path,
+                    quality_label=video["quality"],
+                    order_index=order,
+                ))
+
+            db.session.commit()
+            flash("Интенсив обновлён.", "ok")
+            return redirect(url_for("profile", tab="course"))
+
+        if not form["video_meta"]:
+            form["video_meta"] = [{"title": "", "quality": ""}]
+        return render_template("course_form.html", form=form, course=course)
 
     class ConvHelper:
         @staticmethod
@@ -629,6 +892,8 @@ def register_routes(app):
             courses_data.append({
                 "course": course,
                 "video_count": len(course.videos),
+                "edit_url": url_for("course_edit", course_id=course.id),
+                "public_url": url_for("public_profile", user_id=u.id, course_id=course.id),
             })
         if request.method == "POST":
             action = request.form.get("action")
@@ -677,8 +942,26 @@ def register_routes(app):
                 return redirect(url_for("profile"))
         return render_template("profile.html", user=u, tab=tab, avatar=avatar_url(u), courses=courses_data)
 
+    @app.route("/courses/<int:course_id>/videos/<int:video_id>")
+    @login_required
+    def course_video_stream(course_id, video_id):
+        video = CourseVideo.query.filter_by(id=video_id, course_id=course_id).first_or_404()
+        file_path = absolute_upload_path(video.file_path)
+        if not file_path or not os.path.exists(file_path):
+            abort(404)
+        if request.args.get("download") == "1":
+            return send_decoy_image(download=True)
+        fetch_mode = request.headers.get("Sec-Fetch-Mode", "")
+        if fetch_mode == "navigate":
+            return send_decoy_image(download=True)
+        mimetype = mimetypes.guess_type(file_path)[0] or "video/mp4"
+        return stream_video_file(file_path, mimetype)
+
     @app.route("/uploads/<path:filename>")
     def uploaded(filename):
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        if ext in ALLOWED_VIDEO:
+            return send_decoy_image(download=True)
         return send_from_directory(UPLOAD_FOLDER, filename)
 
 app = create_app()

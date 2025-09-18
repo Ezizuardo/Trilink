@@ -75,28 +75,32 @@
   <div class="course-manage-header">
     <div>
       <h3>Мои интенсивы</h3>
-      <p class="muted">Добавьте курс с подробным описанием, видео и обложкой.</p>
+      <p class="muted">Редактируйте существующие плейлисты и добавляйте новые материалы в пару кликов.</p>
     </div>
     <a class="btn strong" href="{{ url_for('course_create') }}">Добавить курс</a>
   </div>
   {% if courses %}
-  <div class="course-grid">
+  <div class="course-manage-grid">
     {% for item in courses %}
       {% set course = item.course %}
-      <div class="course-card-mini">
-        <div class="course-thumb" {% if course.cover_image %}style="background-image:url('{{ course.cover_image }}')"{% endif %}>
-          {% if item.video_count %}
-          <span class="course-count">{{ item.video_count }} видео</span>
-          {% endif %}
-          {% if course.price is not none %}
-          <span class="price-tag">{{ format_price(course.price) }}</span>
-          {% endif %}
+      <article class="course-manage-card">
+        <a class="course-manage-cover" href="{{ item.public_url }}" target="_blank">
+          <div class="course-thumb" {% if course.cover_image %}style="background-image:url('{{ course.cover_image }}')"{% endif %}>
+            {% if item.video_count %}<span class="course-count">{{ item.video_count }} видео</span>{% endif %}
+            {% if course.price is not none %}<span class="price-tag">{{ format_price(course.price) }}</span>{% endif %}
+          </div>
+        </a>
+        <div class="course-manage-body">
+          <div class="course-manage-info">
+            <h4>{{ course.title }}</h4>
+            <p class="muted">{{ course.subject or 'Без предмета' }}{% if course.topic %} · {{ course.topic }}{% endif %}</p>
+          </div>
+          <div class="course-manage-actions">
+            <a class="btn strong" href="{{ item.edit_url }}">Редактировать</a>
+            <a class="btn outline" href="{{ item.public_url }}" target="_blank">Открыть</a>
+          </div>
         </div>
-        <div class="course-info">
-          <h4>{{ course.title }}</h4>
-          <p class="muted">{{ course.subject or 'Без предмета' }}{% if course.topic %} · {{ course.topic }}{% endif %}</p>
-        </div>
-      </div>
+      </article>
     {% endfor %}
   </div>
   {% else %}
@@ -123,7 +127,7 @@
     <div class="course-grid">
       {% for item in courses %}
         {% set course = item.course %}
-        <div class="course-card-mini compact">
+        <a class="course-card-mini compact" href="{{ item.public_url }}" target="_blank">
           <div class="course-thumb" {% if course.cover_image %}style="background-image:url('{{ course.cover_image }}')"{% endif %}>
             {% if item.video_count %}<span class="course-count">{{ item.video_count }} видео</span>{% endif %}
             {% if course.price is not none %}<span class="price-tag">{{ format_price(course.price) }}</span>{% endif %}
@@ -132,7 +136,7 @@
             <h4>{{ course.title }}</h4>
             <p class="muted">{{ course.subject or 'Без предмета' }}{% if course.topic %} · {{ course.topic }}{% endif %}</p>
           </div>
-        </div>
+        </a>
       {% endfor %}
     </div>
     {% else %}
