@@ -71,6 +71,7 @@
   </div>
 </form>
 {% elif tab == 'course' %}
+  {% if user.role == 'specialist' %}
 <section class="card course-manage">
   <div class="course-manage-header">
     <div>
@@ -110,6 +111,45 @@
   </div>
   {% endif %}
 </section>
+  {% else %}
+<section class="card course-manage">
+  <div class="course-manage-header">
+    <div>
+      <h3>Оплаченные интенсивы</h3>
+      <p class="muted">Здесь отображаются интенсивы специалистов, к которым у вас есть доступ.</p>
+    </div>
+  </div>
+  {% if purchased_courses %}
+  <div class="course-manage-grid">
+    {% for item in purchased_courses %}
+      {% set course = item.course %}
+      <article class="course-manage-card">
+        <a class="course-manage-cover" href="{{ item.public_url }}" target="_blank">
+          <div class="course-thumb" {% if course.cover_image %}style="background-image:url('{{ course.cover_image }}')"{% endif %}>
+            {% if item.video_count %}<span class="course-count">{{ item.video_count }} видео</span>{% endif %}
+            {% if course.price is not none %}<span class="price-tag">{{ format_price(course.price) }}</span>{% endif %}
+          </div>
+        </a>
+        <div class="course-manage-body">
+          <div class="course-manage-info">
+            <h4>{{ course.title }}</h4>
+            <p class="muted">Специалист: {{ item.teacher.first_name or item.teacher.nickname or item.teacher.email }}</p>
+          </div>
+          <div class="course-manage-actions">
+            <a class="btn strong" href="{{ item.public_url }}" target="_blank">Перейти к курсу</a>
+          </div>
+        </div>
+      </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="course-empty">
+    <p>После оплаты здесь появятся ваши интенсивы.</p>
+    <a class="btn outline" href="{{ url_for('search') }}">Найти курс</a>
+  </div>
+  {% endif %}
+</section>
+  {% endif %}
 {% else %}
 <section class="card profile-overview">
   <h3>О себе</h3>
@@ -122,25 +162,47 @@
   <p>Год выпуска: <strong>{{ user.graduation_year or '—' }}</strong></p>
   <p>Почта: <strong>{{ user.email }}</strong> <span class="muted">(видно только вам)</span></p>
   <div class="course-preview">
-    <h3>Мои интенсивы</h3>
-    {% if courses %}
-    <div class="course-grid">
-      {% for item in courses %}
-        {% set course = item.course %}
-        <a class="course-card-mini compact" href="{{ item.public_url }}" target="_blank">
-          <div class="course-thumb" {% if course.cover_image %}style="background-image:url('{{ course.cover_image }}')"{% endif %}>
-            {% if item.video_count %}<span class="course-count">{{ item.video_count }} видео</span>{% endif %}
-            {% if course.price is not none %}<span class="price-tag">{{ format_price(course.price) }}</span>{% endif %}
-          </div>
-          <div class="course-info">
-            <h4>{{ course.title }}</h4>
-            <p class="muted">{{ course.subject or 'Без предмета' }}{% if course.topic %} · {{ course.topic }}{% endif %}</p>
-          </div>
-        </a>
-      {% endfor %}
-    </div>
+    <h3>{{ 'Мои интенсивы' if user.role == 'specialist' else 'Оплаченные интенсивы' }}</h3>
+    {% if user.role == 'specialist' %}
+      {% if courses %}
+      <div class="course-grid">
+        {% for item in courses %}
+          {% set course = item.course %}
+          <a class="course-card-mini compact" href="{{ item.public_url }}" target="_blank">
+            <div class="course-thumb" {% if course.cover_image %}style="background-image:url('{{ course.cover_image }}')"{% endif %}>
+              {% if item.video_count %}<span class="course-count">{{ item.video_count }} видео</span>{% endif %}
+              {% if course.price is not none %}<span class="price-tag">{{ format_price(course.price) }}</span>{% endif %}
+            </div>
+            <div class="course-info">
+              <h4>{{ course.title }}</h4>
+              <p class="muted">{{ course.subject or 'Без предмета' }}{% if course.topic %} · {{ course.topic }}{% endif %}</p>
+            </div>
+          </a>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="course-placeholder">Курсы пока не добавлены.</div>
+      {% endif %}
     {% else %}
-    <div class="course-placeholder">Курсы пока не добавлены.</div>
+      {% if purchased_courses %}
+      <div class="course-grid">
+        {% for item in purchased_courses %}
+          {% set course = item.course %}
+          <a class="course-card-mini compact" href="{{ item.public_url }}" target="_blank">
+            <div class="course-thumb" {% if course.cover_image %}style="background-image:url('{{ course.cover_image }}')"{% endif %}>
+              {% if item.video_count %}<span class="course-count">{{ item.video_count }} видео</span>{% endif %}
+              {% if course.price is not none %}<span class="price-tag">{{ format_price(course.price) }}</span>{% endif %}
+            </div>
+            <div class="course-info">
+              <h4>{{ course.title }}</h4>
+              <p class="muted">Специалист: {{ item.teacher.first_name or item.teacher.nickname or item.teacher.email }}</p>
+            </div>
+          </a>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="course-placeholder">Вы ещё не приобрели интенсивы.</div>
+      {% endif %}
     {% endif %}
   </div>
 </section>

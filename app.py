@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
-import os, datetime, random, mimetypes, re
+import os, datetime, random, mimetypes, re, json, secrets
+from urllib.parse import quote_plus
 from flask import Flask, render_template, request, redirect, url_for, flash, session, send_from_directory, g, abort, Response, send_file
 from flask_sqlalchemy import SQLAlchemy
 from passlib.hash import argon2
 from werkzeug.utils import secure_filename
 
-from sqlalchemy import inspect, text  # SQLAlchemy 2.x: инспектор и text
+from sqlalchemy import inspect  # SQLAlchemy 2.x: инспектор
 
 
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -23,24 +24,34 @@ db = SQLAlchemy()
 
 
 def ensure_schema():
-    """Apply simple runtime migrations that are not covered by create_all()."""
+    """Простые миграции для поддержания схемы без Alembic."""
 
-    # ``db.engine`` is only available inside an application context, so the
-    # function is expected to be called from there.
     engine = db.engine
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
 
-    # ``engine.begin()`` opens a transaction and commits it automatically
-    # which ensures that the DDL executed below is persisted.
     with engine.begin() as conn:
-        inspector = inspect(conn)
+        if "user" in existing_tables:
+            column_names = {col["name"] for col in inspector.get_columns("user")}
+            alters = []
+            if "age" not in column_names:
+                alters.append('ALTER TABLE "user" ADD COLUMN age INTEGER')
+            if "education" not in column_names:
+                alters.append('ALTER TABLE "user" ADD COLUMN education VARCHAR(255)')
+            if "graduation_year" not in column_names:
+                alters.append('ALTER TABLE "user" ADD COLUMN graduation_year VARCHAR(10)')
+            if "course_image" not in column_names:
+                alters.append('ALTER TABLE "user" ADD COLUMN course_image VARCHAR(255)')
+            if "telegram" not in column_names:
+                alters.append('ALTER TABLE "user" ADD COLUMN telegram VARCHAR(120)')
+            for stmt in alters:
+                conn.exec_driver_sql(stmt)
 
-        if "user" not in inspector.get_table_names():
-            return
-
-        column_names = {col["name"] for col in inspector.get_columns("user")}
-        if "age" not in column_names:
-            ddl = text('ALTER TABLE "user" ADD COLUMN age INTEGER')
-            conn.execute(ddl)
+        metadata_tables = db.Model.metadata.tables
+        for table_name in ("course_access_request", "notification", "user_device_session"):
+            if table_name not in existing_tables and table_name in metadata_tables:
+                metadata_tables[table_name].create(conn)
+                existing_tables.add(table_name)
 
 RU = {"login_title":"Вход","email":"Email","password":"Пароль","sign_in":"Войти","register":"Зарегистрироваться","feed":"Лента","search":"Поиск","chat":"Чат","notifications":"Уведомления","plan":"Мой план","profile_title":"Профиль","complete_profile":"Заполните профиль","close":"Закрыть","welcome_title":"Добро пожаловать!","tagline":"Найдите своего специалиста!","first_time":"Впервые у нас?","signup":"Зарегистрироваться","submit":"Далее","cancel":"Отмена","name_title":"Расскажите о себе","first_name":"Имя","last_name":"Фамилия","avatar_title":"Аватар","nickname_title":"Придумайте никнейм","suggestions":"Варианты никнейма","university":"ВУЗ"}
 EN = {"login_title":"Sign in","email":"Email","password":"Password","sign_in":"Sign in","register":"Register","feed":"Feed","search":"Search","chat":"Chat","notifications":"Notifications","plan":"My plan","profile_title":"Profile","complete_profile":"Complete your profile","close":"Close","welcome_title":"Welcome!","tagline":"Find your specialist!","first_time":"New here?","signup":"Sign up","submit":"Next","cancel":"Cancel","name_title":"Tell us about you","first_name":"First name","last_name":"Last name","avatar_title":"Avatar","nickname_title":"Choose a nickname","suggestions":"Suggestions","university":"University"}
@@ -137,6 +148,32 @@ def create_app():
     def _globals():
         g.lang = session.get("lang", "ru")
         g.theme = session.get("theme", "dark")
+        g.device_alert = None
+        g.active_device_session = None
+        g.unread_notifications = 0
+        user = current_user()
+        if user:
+            g.unread_notifications = Notification.query.filter_by(user_id=user.id, is_read=False).count()
+            if user.role == "student":
+                token = session.get("device_token")
+                if token:
+                    session_entry = UserDeviceSession.query.filter_by(user_id=user.id, token=token, is_active=True).first()
+                    if session_entry:
+                        session_entry.last_seen = datetime.datetime.utcnow()
+                        g.active_device_session = session_entry
+                        if session_entry.pending_alert:
+                            alert_payload = parse_payload(session_entry.alert_payload)
+                            if not alert_payload.get("ip"):
+                                alert_payload["ip"] = session_entry.ip_address
+                            if not alert_payload.get("user_agent"):
+                                alert_payload["user_agent"] = session_entry.user_agent
+                            if not alert_payload.get("attempt_time") and session_entry.alert_created_at:
+                                alert_payload["attempt_time"] = session_entry.alert_created_at.isoformat()
+                            if alert_payload.get("ip") and not alert_payload.get("map_url"):
+                                alert_payload["map_url"] = f"https://yandex.ru/map-widget/v1/?z=5&text={quote_plus(alert_payload['ip'])}"
+                            g.device_alert = alert_payload
+                    else:
+                        session.pop("device_token", None)
     def inject_i18n():
         return dict(
             t=lambda k: tr(g.lang, k),
@@ -145,6 +182,7 @@ def create_app():
             current_user=current_user,
             avatar_url=avatar_url,  # функцию тоже пробрасываем в шаблоны
             format_price=format_price,
+            unread_notifications=g.unread_notifications,
         )
     app.before_request(_globals)
     app.context_processor(inject_i18n)
@@ -177,6 +215,14 @@ class User(db.Model):
     specialist = db.relationship("SpecialistProfile", backref="user", uselist=False, cascade="all, delete-orphan")
     posts = db.relationship("Post", backref="user", lazy=True, cascade="all, delete-orphan")
     courses = db.relationship("Course", backref="owner", cascade="all, delete-orphan", order_by="Course.created_at")
+    notifications = db.relationship("Notification", backref="user", cascade="all, delete-orphan")
+    purchase_requests = db.relationship(
+        "CourseAccessRequest",
+        foreign_keys="CourseAccessRequest.student_id",
+        backref="student",
+        cascade="all, delete-orphan",
+    )
+    device_sessions = db.relationship("UserDeviceSession", backref="user", cascade="all, delete-orphan")
 
 class StudentProfile(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -227,6 +273,7 @@ class Course(db.Model):
     price = db.Column(db.Integer)
     created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
     videos = db.relationship("CourseVideo", backref="course", cascade="all, delete-orphan", order_by="CourseVideo.order_index")
+    access_requests = db.relationship("CourseAccessRequest", backref="course", cascade="all, delete-orphan")
 
 
 class CourseVideo(db.Model):
@@ -237,6 +284,44 @@ class CourseVideo(db.Model):
     quality_label = db.Column(db.String(50))
     order_index = db.Column(db.Integer, default=0)
 
+
+class CourseAccessRequest(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    course_id = db.Column(db.Integer, db.ForeignKey("course.id"), nullable=False)
+    student_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    status = db.Column(db.String(20), default="pending")
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+
+    __table_args__ = (db.UniqueConstraint("course_id", "student_id", name="uq_course_student"),)
+
+
+class Notification(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    title = db.Column(db.String(255))
+    message = db.Column(db.Text)
+    category = db.Column(db.String(50), default="general")
+    payload = db.Column(db.Text)
+    related_request_id = db.Column(db.Integer, db.ForeignKey("course_access_request.id"))
+    is_read = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    request = db.relationship("CourseAccessRequest", backref="notifications", foreign_keys=[related_request_id])
+
+
+class UserDeviceSession(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    token = db.Column(db.String(64), unique=True, nullable=False)
+    user_agent = db.Column(db.String(255))
+    ip_address = db.Column(db.String(64))
+    created_at = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    last_seen = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    is_active = db.Column(db.Boolean, default=True)
+    pending_alert = db.Column(db.Boolean, default=False)
+    alert_payload = db.Column(db.Text)
+    alert_created_at = db.Column(db.DateTime)
+
 # ---------- Хелперы ----------
 def login_required(f):
     from functools import wraps
@@ -246,6 +331,30 @@ def login_required(f):
             return redirect(url_for("login_screen"))
         return f(*args, **kwargs)
     return w
+
+
+def create_notification(user_id, title, message, category="general", payload=None, related_request=None):
+    if payload is not None and not isinstance(payload, str):
+        payload = json.dumps(payload, ensure_ascii=False)
+    notif = Notification(
+        user_id=user_id,
+        title=title,
+        message=message,
+        category=category,
+        payload=payload,
+        related_request_id=getattr(related_request, "id", related_request),
+    )
+    db.session.add(notif)
+    return notif
+
+
+def parse_payload(text):
+    if not text:
+        return {}
+    try:
+        return json.loads(text)
+    except (TypeError, json.JSONDecodeError):
+        return {}
 
 def ensure_bots():
     if User.query.filter_by(email="alice@bots.dev").first(): return
@@ -264,31 +373,6 @@ def ensure_bots():
             db.session.add(Post(user_id=u.id, title=title, summary=summary, image=img))
         db.session.commit()
 
-def ensure_schema():
-    engine = db.engine
-    inspector = inspect(engine)
-    user_cols = {col["name"] for col in inspector.get_columns("user")}
-    alters = []
-    # Экранируем имя таблицы "user" — кросс-СУБД безопаснее
-    if "age" not in user_cols:
-        alters.append('ALTER TABLE "user" ADD COLUMN age INTEGER')
-    if "education" not in user_cols:
-        alters.append('ALTER TABLE "user" ADD COLUMN education VARCHAR(255)')
-    if "graduation_year" not in user_cols:
-        alters.append('ALTER TABLE "user" ADD COLUMN graduation_year VARCHAR(10)')
-    if "course_image" not in user_cols:
-        alters.append('ALTER TABLE "user" ADD COLUMN course_image VARCHAR(255)')
-    if "telegram" not in user_cols:
-        alters.append('ALTER TABLE "user" ADD COLUMN telegram VARCHAR(120)')
-    if not alters:
-        return
-    # SQLAlchemy 2.x: сырые SQL через exec_driver_sql() или text(...)
-    with engine.begin() as conn:
-        for stmt in alters:
-            conn.exec_driver_sql(stmt)
-            # альтернатива:
-            # conn.execute(text(stmt))
-
 def translit(s):
     table = {'а':'a','б':'b','в':'v','г':'g','д':'d','е':'e','ё':'e','ж':'zh','з':'z','и':'i','й':'y','к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r','с':'s','т':'t','у':'u','ф':'f','х':'h','ц':'c','ч':'ch','ш':'sh','щ':'sch','ъ':'','ы':'y','ь':'','э':'e','ю':'yu','я':'ya'}
     return ''.join(table.get(ch, ch) for ch in (s or '').lower())
@@ -302,7 +386,15 @@ def register_routes(app):
 
     @app.route("/logout")
     def logout():
-        session.clear(); return redirect(url_for("login_screen"))
+        user = current_user()
+        token = session.get("device_token")
+        session.clear()
+        if user and user.role == "student" and token:
+            entry = UserDeviceSession.query.filter_by(user_id=user.id, token=token).first()
+            if entry:
+                db.session.delete(entry)
+                db.session.commit()
+        return redirect(url_for("login_screen"))
 
     @app.route("/")
     def login_screen():
@@ -318,9 +410,47 @@ def register_routes(app):
             if not user or not argon2.verify(password, user.password_hash):
                 flash("Неверная пара email/пароль.","error")
                 return render_template("login_single.html")
-            session.clear(); session["user_id"] = user.id; session.permanent = True
+            if user.role == "student":
+                existing_session = UserDeviceSession.query.filter_by(user_id=user.id, is_active=True).first()
+                if existing_session:
+                    forwarded = request.headers.get("X-Forwarded-For", "")
+                    ip_addr = (forwarded.split(",")[0].strip() if forwarded else None) or (request.remote_addr or "")
+                    attempt_payload = {
+                        "ip": ip_addr,
+                        "user_agent": request.user_agent.string,
+                        "device": request.user_agent.platform or request.user_agent.browser or "Неизвестно",
+                        "attempt_time": datetime.datetime.utcnow().isoformat(),
+                    }
+                    if ip_addr:
+                        attempt_payload["map_url"] = f"https://yandex.ru/map-widget/v1/?z=5&text={quote_plus(ip_addr)}"
+                    existing_session.pending_alert = True
+                    existing_session.alert_payload = json.dumps(attempt_payload, ensure_ascii=False)
+                    existing_session.alert_created_at = datetime.datetime.utcnow()
+                    db.session.commit()
+                    flash("Вход доступен только с одного устройства. Мы отправили уведомление на активный сеанс.", "error")
+                    return render_template("login_single.html")
+            session.clear()
+            session["user_id"] = user.id
+            session.permanent = True
+            if user.role == "student":
+                token = secrets.token_hex(16)
+                session["device_token"] = token
+                forwarded = request.headers.get("X-Forwarded-For", "")
+                ip_addr = (forwarded.split(",")[0].strip() if forwarded else None) or (request.remote_addr or "")
+                entry = UserDeviceSession(
+                    user_id=user.id,
+                    token=token,
+                    user_agent=request.user_agent.string,
+                    ip_address=ip_addr,
+                    created_at=datetime.datetime.utcnow(),
+                    last_seen=datetime.datetime.utcnow(),
+                    is_active=True,
+                )
+                db.session.add(entry)
             if remember: app.permanent_session_lifetime = datetime.timedelta(days=int(app.config.get("REMEMBER_DAYS",30)))
             else: app.permanent_session_lifetime = datetime.timedelta(days=int(app.config.get("SESSION_DAYS",7)))
+            if user.role == "student":
+                db.session.commit()
             return redirect(url_for("profile"))
         return render_template("login_single.html")
 
@@ -445,31 +575,231 @@ def register_routes(app):
     @app.route("/search")
     @login_required
     def search():
-        q = (request.args.get("q") or "").strip()
-        q_clean = q.lstrip("@").lower()
+        q_raw = (request.args.get("q") or "").strip()
+        q_lower = q_raw.lower()
+        q_clean = q_lower.lstrip("@")
+        explicit_nick = q_raw.startswith("@")
         ensure_bots()
-        people = User.query.order_by(User.created_at.desc()).all()
-        if q_clean:
-            def match(p):
-                hay = " ".join(filter(None, [
-                    p.first_name or "",
-                    p.last_name or "",
-                    p.nickname or "",
-                    p.role or "",
-                    (p.specialist.keywords if p.specialist else ""),
-                    (p.student.looking_for if p.student else ""),
-                ])).lower()
-                return q_clean in hay
-            people = list(filter(match, people))
-        results = []
-        for person in people:
-            person_courses = sorted(person.courses, key=lambda c: c.created_at or datetime.datetime.utcnow(), reverse=True)
-            if person_courses:
-                for course in person_courses:
-                    results.append({"person": person, "course": course})
+        all_people = User.query.order_by(User.created_at.desc()).all()
+
+        specialists_with_courses = []
+        others = []
+        for person in all_people:
+            if person.role == "specialist" and person.courses:
+                latest = max(person.courses, key=lambda c: c.created_at or datetime.datetime.min)
+                specialists_with_courses.append((person, latest.created_at or datetime.datetime.min))
             else:
-                results.append({"person": person, "course": None})
-        return render_template("search.html", results=results, q=q)
+                others.append(person)
+        specialists_with_courses.sort(key=lambda pair: pair[1], reverse=True)
+        others.sort(key=lambda p: p.created_at or datetime.datetime.min, reverse=True)
+
+        suggestion_people = [p for p, _ in specialists_with_courses] + others
+        suggestions = []
+        for person in suggestion_people:
+            latest_course = None
+            if person.courses:
+                latest_course = max(person.courses, key=lambda c: c.created_at or datetime.datetime.min)
+            suggestions.append({
+                "id": person.id,
+                "name": f"{(person.first_name or '').strip()} {(person.last_name or '').strip()}".strip() or person.email,
+                "nickname": person.nickname,
+                "role": person.role,
+                "has_course": bool(person.courses),
+                "course_title": latest_course.title if latest_course else None,
+                "avatar": avatar_url(person),
+                "url": url_for("public_profile", user_id=person.id, course_id=(latest_course.id if latest_course else None)),
+            })
+
+        results = []
+        seen = set()
+
+        def add_result(person, course):
+            key = (person.id, course.id if course else None)
+            if key in seen:
+                return
+            seen.add(key)
+            results.append({"person": person, "course": course})
+
+        def person_matches(person, needle):
+            hay = " ".join(filter(None, [
+                person.first_name or "",
+                person.last_name or "",
+                person.nickname or "",
+                person.role or "",
+                (person.specialist.keywords if person.specialist else ""),
+                (person.student.looking_for if person.student else ""),
+            ])).lower()
+            return needle in hay
+
+        def course_matches(course, needle):
+            hay = " ".join(filter(None, [
+                course.title or "",
+                course.subject or "",
+                course.topic or "",
+                course.description or "",
+            ])).lower()
+            return needle in hay
+
+        if q_clean:
+            for person, _ in specialists_with_courses:
+                matched_courses = [
+                    course for course in sorted(person.courses, key=lambda c: c.created_at or datetime.datetime.min, reverse=True)
+                    if course_matches(course, q_clean)
+                ]
+                if matched_courses:
+                    for course in matched_courses:
+                        add_result(person, course)
+                elif person_matches(person, q_clean):
+                    add_result(person, None)
+        else:
+            for person, _ in specialists_with_courses:
+                courses_sorted = sorted(person.courses, key=lambda c: c.created_at or datetime.datetime.min, reverse=True)
+                for course in courses_sorted:
+                    add_result(person, course)
+
+        if q_clean and not results:
+            # Fallback: allow partial nickname search even if no other data matched
+            for person in suggestion_people:
+                nickname = (person.nickname or "").lower()
+                if person.courses:
+                    if nickname and q_clean in nickname:
+                        course = max(person.courses, key=lambda c: c.created_at or datetime.datetime.min)
+                        add_result(person, course)
+                elif nickname:
+                    if explicit_nick and q_clean in nickname:
+                        add_result(person, None)
+                    elif not explicit_nick and q_clean == nickname:
+                        add_result(person, None)
+
+        return render_template("search.html", results=results, q=q_raw, suggestions=suggestions)
+
+    @app.route("/notifications")
+    @login_required
+    def notifications_center():
+        user = current_user()
+        items = []
+        notifications = Notification.query.filter_by(user_id=user.id).order_by(Notification.created_at.desc()).all()
+        dirty = False
+        for notif in notifications:
+            payload = parse_payload(notif.payload)
+            items.append({"notification": notif, "payload": payload})
+            if notif.category not in ("purchase_request",) and not notif.is_read:
+                notif.is_read = True
+                dirty = True
+        if dirty:
+            db.session.commit()
+        return render_template("notifications.html", items=items)
+
+    @app.route("/courses/<int:course_id>/request-access", methods=["POST"])
+    @login_required
+    def course_request_access(course_id):
+        user = current_user()
+        course = Course.query.get_or_404(course_id)
+        if user.id == course.user_id:
+            return {"ok": False, "message": "Это ваш курс."}, 400
+        if user.role != "student":
+            return {"ok": False, "requires_student": True}, 403
+        request_entry = CourseAccessRequest.query.filter_by(course_id=course.id, student_id=user.id).first()
+        if request_entry and request_entry.status == "approved":
+            return {"ok": True, "state": "approved"}
+        if request_entry and request_entry.status == "pending":
+            return {"ok": True, "state": "pending"}
+        now = datetime.datetime.utcnow()
+        if request_entry:
+            request_entry.status = "pending"
+            request_entry.updated_at = now
+        else:
+            request_entry = CourseAccessRequest(course_id=course.id, student_id=user.id, status="pending", created_at=now, updated_at=now)
+            db.session.add(request_entry)
+        payload = {
+            "student_id": user.id,
+            "student_name": f"{user.first_name or ''} {user.last_name or ''}".strip() or user.email,
+            "student_nick": user.nickname,
+            "course_id": course.id,
+            "course_title": course.title,
+            "course_url": url_for("public_profile", user_id=course.owner.id, course_id=course.id, _external=False),
+            "student_url": url_for("public_profile", user_id=user.id, _external=False),
+        }
+        create_notification(
+            course.user_id,
+            "Новая заявка на курс",
+            f"{payload['student_name']} хочет приобрести интенсив {course.title}.",
+            category="purchase_request",
+            payload=payload,
+            related_request=request_entry,
+        )
+        db.session.commit()
+        return {"ok": True, "state": "pending"}
+
+    @app.route("/courses/requests/<int:request_id>/<action>", methods=["POST"])
+    @login_required
+    def handle_course_request(request_id, action):
+        user = current_user()
+        req = CourseAccessRequest.query.get_or_404(request_id)
+        course = req.course
+        if course.user_id != user.id:
+            abort(403)
+        now = datetime.datetime.utcnow()
+        if action == "approve":
+            req.status = "approved"
+            req.updated_at = now
+            create_notification(
+                req.student_id,
+                "Заявка одобрена",
+                f"Специалист подтвердил доступ к интенсиву {course.title}.",
+                category="purchase_approved",
+                payload={
+                    "course_url": url_for("public_profile", user_id=course.owner.id, course_id=course.id),
+                    "course_title": course.title,
+                },
+                related_request=req,
+            )
+        elif action == "decline":
+            req.status = "declined"
+            req.updated_at = now
+            create_notification(
+                req.student_id,
+                "Заявка отклонена",
+                f"Специалист отклонил запрос на интенсив {course.title}.",
+                category="purchase_declined",
+                payload={
+                    "search_url": url_for("search"),
+                    "course_title": course.title,
+                },
+                related_request=req,
+            )
+        else:
+            abort(400)
+        for notif in Notification.query.filter_by(related_request_id=req.id, user_id=user.id).all():
+            notif.is_read = True
+        db.session.commit()
+        flash("Решение сохранено.", "ok")
+        return redirect(url_for("notifications_center"))
+
+    @app.route("/device-alert/<action>", methods=["POST"])
+    @login_required
+    def device_alert_action(action):
+        user = current_user()
+        if user.role != "student":
+            abort(403)
+        token = session.get("device_token")
+        if not token:
+            return {"ok": False, "message": "Сеанс не найден."}, 400
+        entry = UserDeviceSession.query.filter_by(user_id=user.id, token=token).first()
+        if not entry:
+            return {"ok": False, "message": "Сеанс не найден."}, 400
+        if action == "dismiss":
+            entry.pending_alert = False
+            entry.alert_payload = None
+            entry.alert_created_at = None
+            db.session.commit()
+            return {"ok": True}
+        if action == "terminate":
+            db.session.delete(entry)
+            db.session.commit()
+            session.clear()
+            return {"ok": True, "redirect": url_for("login_screen")}
+        abort(400)
 
     @app.route("/support")
     def support_redirect():
@@ -479,6 +809,44 @@ def register_routes(app):
     @login_required
     def public_profile(user_id):
         person = User.query.get_or_404(user_id)
+        viewer = current_user()
+        viewer_requests = {}
+        if viewer and viewer.role == "student":
+            viewer_requests = {
+                req.course_id: req
+                for req in CourseAccessRequest.query.filter_by(student_id=viewer.id).all()
+            }
+
+        def build_access(course):
+            info = {
+                "is_owner": viewer.id == course.user_id if viewer else False,
+                "has_access": False,
+                "pending": False,
+                "requires_student_login": False,
+                "status": "new",
+                "request_id": None,
+            }
+            if info["is_owner"]:
+                info["has_access"] = True
+                info["status"] = "owner"
+                return info
+            if not viewer:
+                info["status"] = "anonymous"
+                return info
+            if viewer.role != "student":
+                info["requires_student_login"] = True
+                info["status"] = "wrong_role"
+                return info
+            req = viewer_requests.get(course.id)
+            if req:
+                info["status"] = req.status
+                info["request_id"] = req.id
+                if req.status == "approved":
+                    info["has_access"] = True
+                elif req.status == "pending":
+                    info["pending"] = True
+            return info
+
         courses_payload = []
         for course in sorted(person.courses, key=lambda c: c.created_at or datetime.datetime.utcnow(), reverse=True):
             ordered_videos = sorted(course.videos, key=lambda v: (v.order_index or 0, v.id))
@@ -508,6 +876,7 @@ def register_routes(app):
                 "course": course,
                 "lessons": lessons,
                 "video_total": len(ordered_videos),
+                "access": build_access(course),
             })
         selected_id = request.args.get("course_id", type=int)
         selected_course = None
@@ -895,6 +1264,20 @@ def register_routes(app):
                 "edit_url": url_for("course_edit", course_id=course.id),
                 "public_url": url_for("public_profile", user_id=u.id, course_id=course.id),
             })
+        purchased_courses = []
+        if u.role == "student":
+            approved_requests = CourseAccessRequest.query.filter_by(student_id=u.id, status="approved").order_by(CourseAccessRequest.updated_at.desc()).all()
+            for req in approved_requests:
+                course = req.course
+                if not course:
+                    continue
+                purchased_courses.append({
+                    "course": course,
+                    "teacher": course.owner,
+                    "video_count": len(course.videos),
+                    "public_url": url_for("public_profile", user_id=course.owner.id, course_id=course.id),
+                    "approved_at": req.updated_at,
+                })
         if request.method == "POST":
             action = request.form.get("action")
             if action == "about":
@@ -940,12 +1323,22 @@ def register_routes(app):
                 db.session.commit()
                 flash("Профиль обновлён.","ok")
                 return redirect(url_for("profile"))
-        return render_template("profile.html", user=u, tab=tab, avatar=avatar_url(u), courses=courses_data)
+        return render_template("profile.html", user=u, tab=tab, avatar=avatar_url(u), courses=courses_data, purchased_courses=purchased_courses)
 
     @app.route("/courses/<int:course_id>/videos/<int:video_id>")
     @login_required
     def course_video_stream(course_id, video_id):
+        course = Course.query.get_or_404(course_id)
         video = CourseVideo.query.filter_by(id=video_id, course_id=course_id).first_or_404()
+        user = current_user()
+        if not user:
+            abort(403)
+        if user.id != course.user_id:
+            if user.role != "student":
+                return send_decoy_image(download=request.args.get("download") == "1")
+            approved = CourseAccessRequest.query.filter_by(course_id=course.id, student_id=user.id, status="approved").first()
+            if not approved:
+                return send_decoy_image(download=request.args.get("download") == "1")
         file_path = absolute_upload_path(video.file_path)
         if not file_path or not os.path.exists(file_path):
             abort(404)

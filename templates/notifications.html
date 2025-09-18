@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}{{ t('notifications') }}{% endblock %}
+{% block content %}
+<h1><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a6 6 0 0 0-6 6v3.268l-.894 1.789A1 1 0 0 0 6 14h12a1 1 0 0 0 .894-1.447L18 11.268V8a6 6 0 0 0-6-6Zm0 20a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2Z"/></svg>{{ t('notifications') }}</h1>
+<section class="card notifications">
+  {% if items %}
+    {% for entry in items %}
+      {% set notif = entry.notification %}
+      {% set payload = entry.payload %}
+      {% set req = notif.request %}
+      <article class="notification-card {% if not notif.is_read %}unread{% endif %}">
+        <header class="notification-head">
+          <h3>{{ notif.title or 'Уведомление' }}</h3>
+          {% if notif.created_at %}<span class="muted small">{{ notif.created_at.strftime('%d.%m.%Y %H:%M') }}</span>{% endif %}
+        </header>
+        {% if notif.message %}<p>{{ notif.message }}</p>{% endif %}
+        {% if notif.category == 'purchase_request' and payload %}
+        <div class="notification-meta">
+          <div><strong>Ученик:</strong> {{ payload.student_name or 'Неизвестный' }}{% if payload.student_nick %} (@{{ payload.student_nick }}){% endif %}</div>
+          <div><strong>Курс:</strong> {{ payload.course_title or '—' }}</div>
+        </div>
+        <div class="notification-actions">
+          <form method="post" action="{{ url_for('handle_course_request', request_id=notif.related_request_id, action='approve') }}">
+            <button class="btn strong" type="submit" {% if req and req.status != 'pending' %}disabled{% endif %}>Принять</button>
+          </form>
+          <form method="post" action="{{ url_for('handle_course_request', request_id=notif.related_request_id, action='decline') }}">
+            <button class="btn outline" type="submit" {% if req and req.status != 'pending' %}disabled{% endif %}>Отклонить</button>
+          </form>
+        </div>
+        {% elif notif.category == 'purchase_approved' and payload %}
+        <div class="notification-actions">
+          <a class="btn strong" href="{{ payload.course_url or url_for('search') }}">Перейти к курсу</a>
+        </div>
+        {% elif notif.category == 'purchase_declined' and payload %}
+        <div class="notification-actions">
+          <a class="btn outline" href="{{ payload.search_url or url_for('search') }}">Искать новые курсы</a>
+        </div>
+        {% endif %}
+      </article>
+    {% endfor %}
+  {% else %}
+    <div class="notification-empty">Уведомлений пока нет.</div>
+  {% endif %}
+</section>
+{% endblock %}
