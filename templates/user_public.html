@@ -27,6 +27,7 @@
       {% set course = selected_course.course %}
       {% set first_lesson = selected_course.lessons[0] if selected_course.lessons else None %}
       {% set first_source = first_lesson.sources[0] if first_lesson else None %}
+      {% set access = selected_course.access %}
       <div class="course-hero">
         <div class="course-hero-left">
           <h2>{{ course.title }}</h2>
@@ -68,12 +69,13 @@
         </div>
       </div>
 
-      <div class="course-player" data-player>
-        <video controls controlsList="nodownload" preload="metadata" data-video oncontextmenu="return false;">
-          {% if first_source %}
+      <div class="course-player{% if not access.has_access %} locked{% endif %}" data-player {% if not access.has_access %}data-locked="1"{% endif %} data-course-id="{{ course.id }}" data-telegram="{{ person.telegram or '' }}">
+        <video {% if access.has_access %}controls controlsList="nodownload" preload="metadata"{% else %}preload="none" muted{% endif %} data-video oncontextmenu="return false;">
+          {% if access.has_access and first_source %}
           <source src="{{ first_source.src }}">
           {% endif %}
         </video>
+        {% if access.has_access %}
         <div class="player-toolbar">
           <div class="player-controls">
             {% if first_lesson %}
@@ -90,10 +92,47 @@
             <a class="btn outline" data-download-target {% if first_source %}href="{{ first_source.download }}"{% else %}href="#"{% endif %} target="_blank" rel="noopener">Скачать материалы</a>
           </div>
         </div>
+        {% else %}
+        <div class="player-lock">
+          {% set telegram_handle = (person.telegram or '').strip() %}
+          {% set telegram_url = 'https://t.me/' + telegram_handle.lstrip('@') if telegram_handle else None %}
+          {% if access.requires_student_login %}
+          <div class="player-lock-content">
+            <h3>Необходимо войти как ученик</h3>
+            <p class="muted">Чтобы получить доступ к интенсиву, выйдите и авторизуйтесь в роли ученика.</p>
+            <a class="btn outline" href="{{ url_for('logout') }}">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h7v2H7v12h5v2H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Zm11.59 1.59L20 9l-3.41 3.41L15.17 11l1.59-1.59H10v-2h6.76L15.17 6 16.59 4.59Z"/></svg>
+              Выйти
+            </a>
+          </div>
+          {% elif access.pending %}
+          <div class="player-lock-content">
+            <h3>Заявка на рассмотрении</h3>
+            <p>Мы уже отправили специалисту уведомление о вашем запросе.{% if telegram_handle %} Для оплаты свяжитесь со специалистом в Telegram <a href="{{ telegram_url }}" target="_blank" rel="noopener">{{ telegram_handle }}</a>.{% else %} Для оплаты свяжитесь со специалистом, когда он ответит на вашу заявку.{% endif %}</p>
+            {% if not telegram_handle %}
+            <p class="muted small">Специалист ещё не указал контакт в Telegram. Напишите ему в чат или дождитесь новых уведомлений.</p>
+            {% endif %}
+            <p class="muted">Курс откроется после подтверждения оплаты.</p>
+          </div>
+          {% elif access.status == 'declined' %}
+          <div class="player-lock-content">
+            <h3>Доступ закрыт</h3>
+            <p>К сожалению, специалист отклонил вашу заявку на этот интенсив.</p>
+            <a class="btn outline" href="{{ url_for('search') }}">Искать новые курсы</a>
+          </div>
+          {% else %}
+          <div class="player-lock-content">
+            <h3>Видео заблокировано</h3>
+            <p>Приобретите курс, чтобы получить полный доступ к материалам.</p>
+            <button class="btn strong" type="button" data-purchase-button data-course-id="{{ course.id }}">Приобрести курс</button>
+          </div>
+          {% endif %}
+        </div>
+        {% endif %}
       </div>
 
       {% if selected_course.lessons %}
-      <div class="lesson-rail" data-lesson-rail>
+      <div class="lesson-rail{% if not access.has_access %} locked{% endif %}" data-lesson-rail>
         <h3>Все уроки</h3>
         <div class="lesson-scroll">
           {% for lesson in selected_course.lessons %}
@@ -142,4 +181,15 @@
     </aside>
   </div>
 </section>
+<div class="purchase-modal" data-purchase-modal hidden>
+  <div class="purchase-modal-card">
+    <h3>Мы отправили специалисту о вашей заявке</h3>
+    <p data-purchase-contact>Для оплаты свяжитесь со специалистом <a href="#" target="_blank" rel="noopener" data-purchase-telegram>в Telegram</a>.</p>
+    <p class="muted small" data-purchase-contact-fallback hidden>Специалист пока не указал контакт в Telegram. Напишите ему в чат или дождитесь новых уведомлений.</p>
+    <p>Курс откроется после того как специалист подтвердит оплату.</p>
+    <div class="purchase-modal-actions">
+      <button class="btn strong" type="button" data-purchase-close>Понятно</button>
+    </div>
+  </div>
+</div>
 {% endblock %}

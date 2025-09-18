@@ -2,15 +2,20 @@
 {% block title %}{{ t('search') }}{% endblock %}
 {% block content %}
 <h1><span class="icon icon-search"></span>{{ t('search') }}</h1>
-<form class="searchbar" method="get">
-  <input name="q" value="{{ q }}" placeholder="Имя, @ник или направление">
+<form class="searchbar" method="get" data-search-form data-suggestions='{{ suggestions|tojson }}'>
+  <div class="search-input-wrap">
+    <input name="q" value="{{ q }}" placeholder="Имя, @ник или направление" data-search-input autocomplete="off">
+    <div class="search-suggest" data-suggestion-panel hidden>
+      <div class="suggest-list" data-suggestion-list></div>
+    </div>
+  </div>
   <button class="btn strong" type="submit">Найти</button>
 </form>
 <div class="grid-cards">
   {% for entry in results %}
   {% set person = entry.person %}
   {% set course = entry.course %}
-  <a class="card person course-card" href="{{ url_for('public_profile', user_id=person.id, course_id=course.id if course else None) }}">
+  <a class="card person course-card" href="{{ url_for('public_profile', user_id=person.id, course_id=course.id) if course else url_for('public_profile', user_id=person.id) }}">
     <div class="course-card-header">
       <div class="course-thumb" {% if course and course.cover_image %}style="background-image:url('{{ course.cover_image }}')"{% endif %}>
         {% if not course or not course.cover_image %}
@@ -43,7 +48,7 @@
       <div class="preview-title">{{ course.title }}</div>
       <div class="muted small">Интенсив специалиста {{ person.first_name or person.nickname or person.email }}</div>
       {% else %}
-      <div class="muted small">Специалист ещё не опубликовал интенсив.</div>
+      <div class="muted small">{{ 'Специалист ещё не опубликовал интенсив.' if person.role == 'specialist' else 'Пользователь пока без собственных интенсивов.' }}</div>
       {% endif %}
     </div>
     <div class="person-actions">

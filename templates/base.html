@@ -24,6 +24,11 @@
         <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 4a7 7 0 1 1 0 14 7 7 0 0 1 0-14Zm7.71 11.29-3-3-1.42 1.42 3 3a1 1 0 0 0 1.42-1.42Z"/></svg>
         <span>{{ t('search') }}</span>
       </a>
+      <a class="nav-link" href="{{ url_for('notifications_center') }}">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a6 6 0 0 0-6 6v3.268l-.894 1.789A1 1 0 0 0 6 14h12a1 1 0 0 0 .894-1.447L18 11.268V8a6 6 0 0 0-6-6Zm0 20a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2Z"/></svg>
+        <span>{{ t('notifications') }}</span>
+        {% if unread_notifications %}<span class="nav-dot"></span>{% endif %}
+      </a>
       <a class="nav-link" href="{{ url_for('chat_index') }}">
         <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v10H7l-3 3V5Zm2 2v6h12V7H6Zm4 9h10l-2.5 2.5L20 21H10Z"/></svg>
         <span>{{ t('chat') }}</span>
@@ -76,6 +81,36 @@
   {% endwith %}
   {% block content %}{% endblock %}
 </main>
+{% if g.device_alert %}
+<div class="device-alert" data-device-alert>
+  <div class="device-alert-modal" data-device-alert-main>
+    <h2>Кто-то пытается войти в ваш аккаунт</h2>
+    <p>Это вы?</p>
+    <div class="device-alert-details">
+      <div><strong>Устройство:</strong> {{ g.device_alert.device or g.device_alert.user_agent or 'Неизвестно' }}</div>
+      <div><strong>IP:</strong> {{ g.device_alert.ip or 'Не определён' }}</div>
+      <div><strong>Время:</strong> {{ g.device_alert.attempt_time or '—' }}</div>
+    </div>
+    {% if g.device_alert.map_url %}
+    <div class="device-alert-map">
+      <iframe src="{{ g.device_alert.map_url }}" allowfullscreen></iframe>
+    </div>
+    {% endif %}
+    <div class="device-alert-actions">
+      <button class="btn strong" type="button" data-device-alert-confirm>Да</button>
+      <button class="btn outline" type="button" data-device-alert-dismiss>Нет</button>
+    </div>
+  </div>
+  <div class="device-alert-modal" data-device-alert-warning hidden>
+    <h2>Уведомление</h2>
+    <p>Уведомляем вас, что использование нашего сервиса лимитировано одним устройством. Нажимая «Я знаю» вы завершите работу на этом устройстве.</p>
+    <div class="device-alert-actions">
+      <button class="btn strong" type="button" data-device-alert-logout>Я знаю</button>
+      <button class="btn outline" type="button" data-device-alert-cancel>Отмена</button>
+    </div>
+  </div>
+</div>
+{% endif %}
 <script>const SET_THEME_URL="{{ url_for('set_theme', theme='__') }}";</script>
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
