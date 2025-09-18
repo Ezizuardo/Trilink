@@ -42,25 +42,26 @@
     const itemsWrap = videoForm.querySelector('.video-items');
     const tpl = document.getElementById('videoItemTemplate');
     const addBtn = videoForm.querySelector('[data-video-add]');
+    const editMode = videoForm.dataset.editMode === '1';
     const updateRemoveState = ()=>{
       const items = itemsWrap.querySelectorAll('[data-video-item]');
       items.forEach((item, idx)=>{
         const removeBtn = item.querySelector('[data-video-remove]');
         const fileInput = item.querySelector('input[type="file"]');
         if(removeBtn){
-          removeBtn.style.display = items.length <= 1 ? 'none' : '';
+          removeBtn.style.display = !editMode && items.length <= 1 ? 'none' : '';
         }
         if(fileInput){
-          fileInput.required = idx === 0;
+          fileInput.required = !editMode && idx === 0;
         }
       });
     };
-    const bindRemove = (node)=>{
+    const bindRemove = node => {
       const btn = node.querySelector('[data-video-remove]');
       if(btn){
         btn.addEventListener('click', ()=>{
           const siblings = itemsWrap.querySelectorAll('[data-video-item]');
-          if(siblings.length <= 1) return;
+          if(!editMode && siblings.length <= 1) return;
           node.remove();
           updateRemoveState();
         });
@@ -80,42 +81,27 @@
         addItem();
       });
     }
-    if(!itemsWrap.querySelector('[data-video-item]')){
+    if(!itemsWrap.querySelector('[data-video-item]') && !editMode){
       addItem();
     }
   }
 
-  document.querySelectorAll('[data-preview-hover]').forEach(box=>{
-    const video = box.querySelector('video');
-    if(!video) return;
-    let timer;
-    box.addEventListener('mouseenter', ()=>{
-      clearTimeout(timer);
-      video.currentTime = 0;
-      video.play().catch(()=>{});
-    });
-    box.addEventListener('mouseleave', ()=>{
-      timer = setTimeout(()=>{
-        video.pause();
-        try{ video.currentTime = 0; }catch(e){}
-      }, 80);
-    });
-  });
-
-  document.querySelectorAll('[data-course-player]').forEach(player=>{
+  document.querySelectorAll('[data-player]').forEach(player=>{
     const video = player.querySelector('[data-video]') || player.querySelector('video');
     const qualitySelect = player.querySelector('[data-quality-select]');
-    const playlist = Array.from(player.querySelectorAll('[data-playlist] .playlist-item'));
-    if(!video || !playlist.length) return;
-    const sourceEl = video.querySelector('source');
-    const setSource = src => {
+    const downloadLink = player.querySelector('[data-download-target]');
+    const sourceEl = video ? video.querySelector('source') : null;
+    if(!video) return;
+    const container = player.closest('.course-main');
+    const lessonButtons = container ? Array.from(container.querySelectorAll('[data-lesson-rail] .lesson-card')) : [];
+    const setSource = (src)=>{
       if(sourceEl){
         sourceEl.src = src;
       }
       video.src = src;
       video.load();
     };
-    const loadSources = sources => {
+    const loadSources = (sources)=>{
       if(!sources || !sources.length) return;
       if(qualitySelect){
         qualitySelect.innerHTML = '';
@@ -127,15 +113,16 @@
           qualitySelect.appendChild(opt);
         });
       }
+      if(downloadLink){
+        downloadLink.href = sources[0].download || downloadLink.href;
+      }
       setSource(sources[0].src);
     };
-    playlist.forEach(item=>{
-      item.addEventListener('click', ()=>{
-        playlist.forEach(p=>p.classList.remove('active'));
-        item.classList.add('active');
-        const sources = JSON.parse(item.dataset.sources || '[]');
-        const poster = item.dataset.poster;
-        if(poster){ video.setAttribute('poster', poster); }
+    lessonButtons.forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        lessonButtons.forEach(el=> el.classList.remove('active'));
+        btn.classList.add('active');
+        const sources = JSON.parse(btn.dataset.sources || '[]');
         loadSources(sources);
       });
     });
@@ -146,7 +133,33 @@
         video.play().catch(()=>{});
       });
     }
-    const initialSources = JSON.parse(playlist[0].dataset.sources || '[]');
-    loadSources(initialSources);
+    if(lessonButtons.length){
+      const initialSources = JSON.parse(lessonButtons[0].dataset.sources || '[]');
+      loadSources(initialSources);
+    }
+    video.addEventListener('dblclick', evt=>{
+      const rect = video.getBoundingClientRect();
+      const midpoint = rect.width / 2;
+      const offset = evt.clientX - rect.left;
+      const delta = offset > midpoint ? 10 : -10;
+      try{
+        video.currentTime = Math.max(0, video.currentTime + delta);
+      }catch(e){}
+    });
+  });
+
+  document.querySelectorAll('[data-accordion-group]').forEach(group=>{
+    group.querySelectorAll('.accordion-toggle').forEach(toggle=>{
+      toggle.addEventListener('click', ()=>{
+        const item = toggle.closest('.accordion-item');
+        if(!item) return;
+        const isOpen = item.classList.contains('open');
+        if(isOpen){
+          item.classList.remove('open');
+        }else{
+          item.classList.add('open');
+        }
+      });
+    });
   });
 })();

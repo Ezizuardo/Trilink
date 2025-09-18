@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0a220f"/>
+      <stop offset="1" stop-color="#14552a"/>
+    </linearGradient>
+  </defs>
+  <rect width="800" height="600" fill="url(#bg)" rx="28"/>
+  <g fill="#1bb34a" font-family="'Segoe UI', 'DejaVu Sans', sans-serif" text-anchor="middle">
+    <text x="400" y="270" font-size="54" font-weight="700">Материалы защищены</text>
+    <text x="400" y="340" font-size="34" fill="#ffffff">Загрузка недоступна</text>
+  </g>
+  <circle cx="400" cy="430" r="70" fill="none" stroke="#1bb34a" stroke-width="10"/>
+  <path d="M360 470 400 430 440 470" stroke="#1bb34a" stroke-width="12" stroke-linecap="round" fill="none"/>
+  <path d="M400 410v-70" stroke="#1bb34a" stroke-width="12" stroke-linecap="round"/>
+</svg>

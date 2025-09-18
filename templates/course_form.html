@@ -1,75 +1,128 @@
 {% extends "base.html" %}
-{% block title %}Добавить курс{% endblock %}
+{% set page_title = 'Редактировать интенсив' if form.is_edit else 'Добавить интенсив' %}
+{% block title %}{{ page_title }}{% endblock %}
 {% block content %}
-<h1><span class="icon icon-profile"></span>Добавить курс</h1>
-<form class="card course-form" method="post" enctype="multipart/form-data" id="courseForm">
-  <div class="grid-2 stack-sm">
-    <label class="field">
-      <span>Заголовок *</span>
-      <input name="title" value="{{ form.title }}" placeholder="Например, React с нуля" required>
-    </label>
-    <label class="field">
-      <span>Цена интенсива *</span>
-      <input name="price" value="{{ form.price }}" placeholder="3500" inputmode="decimal" required>
-    </label>
-    <label class="field">
-      <span>Предмет</span>
-      <input name="subject" value="{{ form.subject }}" placeholder="Направление или предмет">
-    </label>
-    <label class="field">
-      <span>Тема (можно пропустить)</span>
-      <input name="topic" value="{{ form.topic }}" placeholder="Тема курса">
-    </label>
-  </div>
-  <label class="field">
-    <span>Описание</span>
-    <textarea name="description" rows="4" placeholder="Расскажите, чему научится студент и кому подойдёт курс">{{ form.description }}</textarea>
-  </label>
-  <div class="grid-2 stack-sm file-pair">
-    <label class="field file-field">
-      <span>Изображение интенсива *</span>
-      <input type="file" name="cover_image" accept="image/*" required>
-      <small class="muted">Добавьте яркую обложку, которая появится в поиске.</small>
-    </label>
-    <label class="field file-field">
-      <span>Видео-превью (необязательно)</span>
-      <input type="file" name="preview_clip" accept="video/*">
-      <small class="muted">Короткое превью, которое воспроизводится при наведении.</small>
-    </label>
-  </div>
-  <div class="videos-block" data-video-list>
-    <div class="videos-head">
-      <h3>Видео материалы</h3>
-      <button class="btn outline" type="button" data-video-add>Добавить видео</button>
-    </div>
-    <p class="muted small">Если видео весит слишком много, разделите его на несколько частей и загрузите их отдельно.</p>
-    <div class="video-items">
-      {% for meta in form.video_meta %}
-      <div class="video-item" data-video-item>
+<section class="course-editor">
+  <header class="page-heading">
+    <h1><span class="icon icon-profile"></span>{{ page_title }}</h1>
+    <p class="muted">Соберите структуру интенсива, загрузите материалы и добавьте обложку, чтобы ученикам было проще выбрать вас.</p>
+  </header>
+  <form class="card course-form" method="post" enctype="multipart/form-data" id="courseForm">
+    <div class="course-form-main">
+      <div class="course-form-fields">
         <div class="grid-2 stack-sm">
           <label class="field">
-            <span>Название видео</span>
-            <input name="video_title[]" value="{{ meta.title }}" placeholder="Урок {{ loop.index }}">
+            <span>Заголовок *</span>
+            <input name="title" value="{{ form.title }}" placeholder="Например, Интенсив по подготовке к ЕГЭ" required>
           </label>
           <label class="field">
-            <span>Качество</span>
-            <input name="video_quality[]" value="{{ meta.quality }}" placeholder="Например, 1080p">
+            <span>Цена интенсива *</span>
+            <input name="price" value="{{ form.price }}" placeholder="3500" inputmode="decimal" required>
+          </label>
+          <label class="field">
+            <span>Предмет</span>
+            <input name="subject" value="{{ form.subject }}" placeholder="Направление или предмет">
+          </label>
+          <label class="field">
+            <span>Тема (необязательно)</span>
+            <input name="topic" value="{{ form.topic }}" placeholder="Основная тема">
           </label>
         </div>
-        <label class="field file-field">
-          <span>Файл</span>
-          <input type="file" name="video_file[]" accept="video/*" {% if loop.first %}required{% endif %}>
-        </label>
-        <button class="remove-video" type="button" data-video-remove>Удалить видео</button>
       </div>
-      {% endfor %}
+      <div class="course-cover">
+        <div class="cover-preview">
+          {% if form.cover_preview %}
+          <img src="{{ form.cover_preview }}" alt="Обложка интенсива">
+          {% else %}
+          <div class="cover-placeholder">Превью появится после загрузки</div>
+          {% endif %}
+        </div>
+        <label class="field file-field">
+          <span>Изображение интенсива {% if not form.is_edit %}*{% endif %}</span>
+          <input type="file" name="cover_image" accept="image/*" {% if not form.is_edit %}required{% endif %}>
+          <small class="muted">Форматы: png, jpg, jpeg, gif, webp. Обложка отображается в поиске и на странице интенсива.</small>
+        </label>
+      </div>
     </div>
-  </div>
-  <div class="form-actions">
-    <a class="btn outline" href="{{ url_for('profile', tab='course') }}">Отмена</a>
-    <button class="btn strong" type="submit">Сохранить курс</button>
-  </div>
-</form>
+    <label class="field">
+      <span>Описание</span>
+      <textarea name="description" rows="4" placeholder="Опишите программу, пользу и формат занятий">{{ form.description }}</textarea>
+    </label>
+
+    {% if form.is_edit and form.existing_videos %}
+    <section class="existing-videos" data-existing-list>
+      <div class="section-head">
+        <h3>Список уроков</h3>
+        <p class="muted small">Настройте порядок, названия и отметьте материалы, которые нужно удалить.</p>
+      </div>
+      <div class="existing-list">
+        {% for video in form.existing_videos %}
+        <article class="existing-card">
+          <div class="existing-card-head">
+            <span class="badge">Урок {{ loop.index }}</span>
+            <label class="toggle-remove">
+              <input type="checkbox" name="remove_video_ids[]" value="{{ video.id }}" {% if video.marked %}checked{% endif %}>
+              <span>Удалить</span>
+            </label>
+          </div>
+          <div class="grid-3 stack-sm">
+            <label class="field">
+              <span>Название</span>
+              <input name="existing_title_{{ video.id }}" value="{{ video.title }}" placeholder="Урок {{ loop.index }}">
+            </label>
+            <label class="field">
+              <span>Качество</span>
+              <input name="existing_quality_{{ video.id }}" value="{{ video.quality }}" placeholder="Например, 1080p">
+            </label>
+            <label class="field">
+              <span>Порядок</span>
+              <input type="number" name="existing_order_{{ video.id }}" value="{{ video.order if video.order is not none else loop.index0 }}" min="0">
+            </label>
+          </div>
+        </article>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+
+    <section class="videos-block" data-video-list data-edit-mode="{{ '1' if form.is_edit else '0' }}">
+      <div class="videos-head">
+        <div>
+          <h3>Новые материалы</h3>
+          <p class="muted small">При необходимости добавьте дополнительные видео. Они появятся в конце плейлиста.</p>
+        </div>
+        <button class="btn outline" type="button" data-video-add>Добавить файл</button>
+      </div>
+      <div class="video-items">
+        {% for meta in form.video_meta %}
+        <div class="video-item" data-video-item>
+          <div class="grid-2 stack-sm">
+            <label class="field">
+              <span>Название видео</span>
+              <input name="video_title[]" value="{{ meta.title }}" placeholder="Новый урок">
+            </label>
+            <label class="field">
+              <span>Качество</span>
+              <input name="video_quality[]" value="{{ meta.quality }}" placeholder="Например, 720p">
+            </label>
+          </div>
+          <label class="field file-field">
+            <span>Файл</span>
+            <input type="file" name="video_file[]" accept="video/*">
+          </label>
+          <button class="remove-video" type="button" data-video-remove>Убрать блок</button>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <div class="form-actions">
+      <a class="btn outline" href="{{ url_for('profile', tab='course') }}">Отмена</a>
+      <button class="btn strong" type="submit">{{ 'Сохранить изменения' if form.is_edit else 'Опубликовать интенсив' }}</button>
+    </div>
+  </form>
+</section>
+
 <template id="videoItemTemplate">
   <div class="video-item" data-video-item>
     <div class="grid-2 stack-sm">
@@ -84,9 +137,9 @@
     </div>
     <label class="field file-field">
       <span>Файл</span>
-      <input type="file" name="video_file[]" accept="video/*" required>
+      <input type="file" name="video_file[]" accept="video/*">
     </label>
-    <button class="remove-video" type="button" data-video-remove>Удалить видео</button>
+    <button class="remove-video" type="button" data-video-remove>Убрать блок</button>
   </div>
 </template>
 {% endblock %}

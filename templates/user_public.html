@@ -1,82 +1,145 @@
 {% extends "base.html" %}
 {% block title %}Профиль пользователя{% endblock %}
 {% block content %}
-<h1><span class="icon icon-profile"></span>{{ person.first_name or 'Профиль' }} {{ person.last_name or '' }}</h1>
-<section class="profile-public">
-  <div class="card public-left">
-    <img class="avatar" src="{{ avatar }}" alt="avatar">
-    <h2>О себе</h2>
-    <p><strong>@{{ person.nickname or 'без_ника' }}</strong></p>
-    <p>Роль: {{ 'Специалист' if person.role=='specialist' else 'Ученик' }}</p>
-    <p>Имя: {{ person.first_name or '—' }}</p>
-    <p>Фамилия: {{ person.last_name or '—' }}</p>
-    <p>Возраст: {{ person.age or '—' }}</p>
-    <p>Образование: {{ person.education or '—' }}</p>
-    <p>Год выпуска: {{ person.graduation_year or '—' }}</p>
-    <p>Телеграм: {{ person.telegram or '—' }}</p>
-  </div>
-  <div class="card public-right">
-    <h2>Курсы</h2>
-    {% if courses %}
-      {% for data in courses %}
-        {% set course = data.course %}
-        <article class="course-detail" data-course-player>
-          <header class="course-detail-header">
-            <div class="course-detail-cover" {% if course.cover_image %}style="background-image:url('{{ course.cover_image }}')"{% endif %}>
-              {% if data.video_total %}
-              <span class="course-count">{{ data.video_total }} видео</span>
-              {% endif %}
-              {% if course.price is not none %}
-              <span class="price-tag">{{ format_price(course.price) }}</span>
-              {% endif %}
-              {% if course.preview_clip %}
-              <div class="hover-video" data-preview-hover>
-                <video src="{{ course.preview_clip }}" muted loop preload="metadata" {% if course.cover_image %}poster="{{ course.cover_image }}"{% endif %}></video>
-              </div>
-              {% endif %}
-            </div>
-            <div class="course-detail-meta">
-              <h3>{{ course.title }}</h3>
-              <div class="muted">{{ course.subject or 'Без предмета' }}{% if course.topic %} · {{ course.topic }}{% endif %}</div>
-              {% if course.description %}<p>{{ course.description }}</p>{% endif %}
-            </div>
-          </header>
-          {% if data.lessons %}
-          <div class="course-player" data-player>
-            <video controls preload="metadata" data-video {% if course.cover_image %}poster="{{ course.cover_image }}"{% endif %}>
-              {% set first_lesson = data.lessons[0] %}
-              {% set first_source = first_lesson.sources[0] %}
-              <source src="{{ first_source.src }}">
-            </video>
-            <div class="player-controls">
-              <label>Качество
-                <select data-quality-select>
-                  {% for source in first_lesson.sources %}
-                  <option value="{{ source.src }}">{{ source.quality }}</option>
-                  {% endfor %}
-                </select>
-              </label>
-            </div>
-            <ul class="playlist" data-playlist>
-              {% for lesson in data.lessons %}
-              <li class="playlist-item {% if loop.first %}active{% endif %}" data-sources='{{ lesson.sources | tojson }}' data-title="{{ lesson.title }}" data-poster="{{ course.cover_image or '' }}">
-                <span class="playlist-index">{{ loop.index }}</span>
-                <div>
-                  <div class="playlist-title">{{ lesson.title }}</div>
-                  <div class="muted small">{{ lesson.sources|length }} вариант(а) качества</div>
-                </div>
-              </li>
-              {% endfor %}
-            </ul>
-          </div>
-          {% else %}
-          <p class="muted">В этом курсе пока нет загруженных видео.</p>
-          {% endif %}
-        </article>
-      {% endfor %}
-    {% else %}
-      <div class="course-placeholder">Специалист ещё не добавил курс.</div>
+<section class="course-page">
+  <header class="course-header">
+    <div class="course-author">
+      <img class="course-author-avatar" src="{{ avatar }}" alt="Аватар {{ person.first_name or person.nickname or 'пользователя' }}">
+      <div>
+        <h1>{{ person.first_name or 'Профиль' }} {{ person.last_name or '' }}</h1>
+        <div class="muted">@{{ person.nickname or 'без_ника' }} · {{ 'Специалист' if person.role=='specialist' else 'Ученик' }}</div>
+      </div>
+    </div>
+    {% if selected_course %}
+    <div class="course-header-meta">
+      {% set course = selected_course.course %}
+      <div class="badge accent">{{ course.subject or 'Без предмета' }}{% if course.topic %} · {{ course.topic }}{% endif %}</div>
+      {% if course.price is not none %}
+      <div class="price-pill">{{ format_price(course.price) }}</div>
+      {% endif %}
+    </div>
     {% endif %}
+  </header>
+
+  <div class="course-layout">
+    <div class="course-main">
+      {% if selected_course %}
+      {% set course = selected_course.course %}
+      {% set first_lesson = selected_course.lessons[0] if selected_course.lessons else None %}
+      {% set first_source = first_lesson.sources[0] if first_lesson else None %}
+      <div class="course-hero">
+        <div class="course-hero-left">
+          <h2>{{ course.title }}</h2>
+          <p class="muted">Последнее обновление · {{ (course.created_at.strftime('%d.%m.%Y') if course.created_at else '') }}</p>
+          <div class="accordion-group" data-accordion-group>
+            <div class="accordion-item open" data-accordion-item>
+              <button class="accordion-toggle" type="button">Описание</button>
+              <div class="accordion-content">
+                {% if course.description %}
+                <p>{{ course.description }}</p>
+                {% else %}
+                <p class="muted">Автор ещё не добавил описание к интенсиву.</p>
+                {% endif %}
+              </div>
+            </div>
+            <div class="accordion-item" data-accordion-item>
+              <button class="accordion-toggle" type="button">О специалисте</button>
+              <div class="accordion-content">
+                <ul class="about-list">
+                  <li><strong>Имя:</strong> {{ person.first_name or '—' }} {{ person.last_name or '' }}</li>
+                  <li><strong>Возраст:</strong> {{ person.age or '—' }}</li>
+                  <li><strong>Образование:</strong> {{ person.education or '—' }}</li>
+                  <li><strong>Год выпуска:</strong> {{ person.graduation_year or '—' }}</li>
+                  <li><strong>Ключевые навыки:</strong> {{ person.specialist.keywords if person.specialist else '—' }}</li>
+                  <li><strong>Telegram:</strong> {{ person.telegram or '—' }}</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="course-hero-right">
+          <div class="hero-cover">
+            {% if course.cover_image %}
+            <img src="{{ course.cover_image }}" alt="Обложка {{ course.title }}">
+            {% else %}
+            <div class="cover-placeholder">Изображение появится после загрузки</div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <div class="course-player" data-player>
+        <video controls controlsList="nodownload" preload="metadata" data-video oncontextmenu="return false;">
+          {% if first_source %}
+          <source src="{{ first_source.src }}">
+          {% endif %}
+        </video>
+        <div class="player-toolbar">
+          <div class="player-controls">
+            {% if first_lesson %}
+            <label>Качество
+              <select data-quality-select>
+                {% for source in first_lesson.sources %}
+                <option value="{{ source.src }}">{{ source.quality }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            {% endif %}
+          </div>
+          <div class="player-actions">
+            <a class="btn outline" data-download-target {% if first_source %}href="{{ first_source.download }}"{% else %}href="#"{% endif %} target="_blank" rel="noopener">Скачать материалы</a>
+          </div>
+        </div>
+      </div>
+
+      {% if selected_course.lessons %}
+      <div class="lesson-rail" data-lesson-rail>
+        <h3>Все уроки</h3>
+        <div class="lesson-scroll">
+          {% for lesson in selected_course.lessons %}
+          <button class="lesson-card {% if loop.first %}active{% endif %}" type="button" data-sources='{{ lesson.sources | tojson }}'>
+            <span class="lesson-index">{{ loop.index }}</span>
+            <span class="lesson-title">{{ lesson.title }}</span>
+          </button>
+          {% endfor %}
+        </div>
+      </div>
+      {% else %}
+      <div class="course-placeholder">В этом интенсиве пока нет загруженных видео.</div>
+      {% endif %}
+      {% else %}
+      <div class="course-placeholder">Специалист ещё не добавил интенсив.</div>
+      {% endif %}
+    </div>
+
+    <aside class="course-side">
+      <div class="side-card">
+        <h3>Интенсивы специалиста</h3>
+        {% if courses %}
+        <div class="side-courses">
+          {% for payload in courses %}
+          {% set course = payload.course %}
+          <a class="side-course {% if selected_course and selected_course.course.id == course.id %}active{% endif %}" href="{{ url_for('public_profile', user_id=person.id, course_id=course.id) }}">
+            <div class="side-thumb" {% if course.cover_image %}style="background-image:url('{{ course.cover_image }}')"{% endif %}></div>
+            <div class="side-info">
+              <div class="side-title">{{ course.title }}</div>
+              <div class="muted small">{{ course.subject or 'Без предмета' }}{% if course.topic %} · {{ course.topic }}{% endif %}</div>
+            </div>
+          </a>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="muted small">Здесь появятся опубликованные интенсивы.</p>
+        {% endif %}
+      </div>
+      <div class="side-card compact">
+        <h3>Контакты</h3>
+        <ul class="side-list">
+          <li><strong>Telegram:</strong> {{ person.telegram or '—' }}</li>
+          <li><strong>Email:</strong> {{ person.email }}</li>
+        </ul>
+      </div>
+    </aside>
   </div>
 </section>
 {% endblock %}

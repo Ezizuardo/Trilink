@@ -7,56 +7,52 @@
   <button class="btn strong" type="submit">Найти</button>
 </form>
 <div class="grid-cards">
-  {% for p in people %}
-  {% set preview_course = p.courses|last %}
-  <a class="card person course-card" href="{{ url_for('public_profile', user_id=p.id) }}">
+  {% for entry in results %}
+  {% set person = entry.person %}
+  {% set course = entry.course %}
+  <a class="card person course-card" href="{{ url_for('public_profile', user_id=person.id, course_id=course.id if course else None) }}">
     <div class="course-card-header">
-      <div class="course-thumb" {% if preview_course and preview_course.cover_image %}style="background-image:url('{{ preview_course.cover_image }}')"{% endif %}>
-        {% if not preview_course or not preview_course.cover_image %}
-        <span class="course-thumb-placeholder">Превью появится после публикации</span>
+      <div class="course-thumb" {% if course and course.cover_image %}style="background-image:url('{{ course.cover_image }}')"{% endif %}>
+        {% if not course or not course.cover_image %}
+        <span class="course-thumb-placeholder">Изображение появится после загрузки</span>
         {% endif %}
-        {% if preview_course and preview_course.preview_clip %}
-        <div class="hover-video" data-preview-hover>
-          <video src="{{ preview_course.preview_clip }}" muted loop preload="metadata" {% if preview_course.cover_image %}poster="{{ preview_course.cover_image }}"{% endif %}></video>
-        </div>
-        {% endif %}
-        {% if preview_course and preview_course.videos %}
-        <span class="course-count">{{ preview_course.videos|length }} видео</span>
+        {% if course and course.videos %}
+        <span class="course-count">{{ course.videos|length }} видео</span>
         {% endif %}
       </div>
-      {% if preview_course and preview_course.price is not none %}
-      <span class="price-tag">{{ format_price(preview_course.price) }}</span>
+      {% if course and course.price is not none %}
+      <span class="price-tag">{{ format_price(course.price) }}</span>
       {% endif %}
     </div>
     <div class="person-row">
-      <img class="avatar-mini" src="{{ avatar_url(p) }}" alt="{{ p.nickname or p.first_name }}">
+      <img class="avatar-mini" src="{{ avatar_url(person) }}" alt="{{ person.nickname or person.first_name }}">
       <div>
-        <div class="p-name">{{ p.first_name or 'Без имени' }} {{ p.last_name or '' }}</div>
-        <div class="muted">@{{ p.nickname or 'без_ника' }}</div>
+        <div class="p-name">{{ person.first_name or 'Без имени' }} {{ person.last_name or '' }}</div>
+        <div class="muted">@{{ person.nickname or 'без_ника' }}</div>
       </div>
     </div>
     <div class="tags">
-      {% if preview_course %}
-        {{ preview_course.subject or 'Без предмета' }}{% if preview_course.topic %} · {{ preview_course.topic }}{% endif %}
+      {% if course %}
+        {{ course.subject or 'Без предмета' }}{% if course.topic %} · {{ course.topic }}{% endif %}
       {% else %}
-        {{ p.specialist.keywords if p.specialist else (p.student.looking_for if p.student else '') }}
+        {{ person.specialist.keywords if person.specialist else (person.student.looking_for if person.student else '') }}
       {% endif %}
     </div>
     <div class="preview-info">
-      {% if preview_course %}
-      <div class="preview-title">Превью курса</div>
-      <div class="muted small">{{ preview_course.title }}</div>
+      {% if course %}
+      <div class="preview-title">{{ course.title }}</div>
+      <div class="muted small">Интенсив специалиста {{ person.first_name or person.nickname or person.email }}</div>
       {% else %}
-      <div class="muted small">Специалист ещё не добавил курс.</div>
+      <div class="muted small">Специалист ещё не опубликовал интенсив.</div>
       {% endif %}
     </div>
     <div class="person-actions">
-      <span>Перейти к профилю</span>
+      <span>Перейти к интенсиву</span>
       <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7-1.41-1.41L13.17 12 7.59 6.41 9 5Z"/></svg>
     </div>
   </a>
   {% endfor %}
-  {% if not people %}
+  {% if not results %}
   <div class="card muted">По вашему запросу ничего не найдено.</div>
   {% endif %}
 </div>
